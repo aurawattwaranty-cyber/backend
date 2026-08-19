@@ -1,15 +1,12 @@
 import "dotenv/config";
 import { config } from "./config.js";
-import { initializeStore } from "./data/store.js";
 import { createApp } from "./app.js";
-import { ensureBootstrapAdmin, initializeAuthSessions } from "./services/auth.service.js";
+import { ensureBackendReady } from "./runtime.js";
 
 const app = createApp();
 
 async function start() {
-  await initializeStore();
-  await ensureBootstrapAdmin();
-  await initializeAuthSessions();
+  await ensureBackendReady();
   const server = app.listen(config.port, () => {
     console.log(`Aurawatt backend listening on http://localhost:${config.port}`);
   });

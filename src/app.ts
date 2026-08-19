@@ -6,6 +6,7 @@ import morgan from "morgan";
 import { config } from "./config.js";
 import { apiRouter } from "./routes/index.js";
 import { errorHandler, notFound } from "./middleware/error.middleware.js";
+import { AppError } from "./utils/errors.js";
 
 const helmet = helmetImport as unknown as typeof import("helmet").default;
 
@@ -25,7 +26,13 @@ export function createApp() {
           callback(null, true);
           return;
         }
-        callback(new Error(`CORS blocked for origin ${origin}`));
+        callback(
+          new AppError(
+            `CORS blocked for origin ${origin}`,
+            403,
+            "cors_blocked",
+          ),
+        );
       },
       credentials: true,
     }),
