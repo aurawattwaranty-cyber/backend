@@ -233,20 +233,22 @@ export function logout(token?: string | null): void {
 }
 
 export function sessionCookieOptions(remember: boolean) {
+  const crossSiteCookie = process.env.NODE_ENV === "production";
   return {
     httpOnly: true,
-    sameSite: "lax" as const,
-    secure: process.env.NODE_ENV === "production",
+    sameSite: crossSiteCookie ? "none" as const : "lax" as const,
+    secure: crossSiteCookie,
     maxAge: (remember ? 30 : 1) * 24 * 60 * 60 * 1000,
     path: "/",
   };
 }
 
 export function clearCookieOptions() {
+  const crossSiteCookie = process.env.NODE_ENV === "production";
   return {
     httpOnly: true,
-    sameSite: "lax" as const,
-    secure: process.env.NODE_ENV === "production",
+    sameSite: crossSiteCookie ? "none" as const : "lax" as const,
+    secure: crossSiteCookie,
     path: "/",
   };
 }
