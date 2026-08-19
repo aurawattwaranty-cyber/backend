@@ -6,9 +6,18 @@ function csv(value: string | undefined, fallback: string[]): string[] {
     .filter(Boolean);
 }
 
+function unique(values: string[]): string[] {
+  return [...new Set(values)];
+}
+
+const corsOrigins = unique([
+  ...csv(process.env.CORS_ORIGIN, []),
+  ...csv(process.env.SITE_URL, []),
+]);
+
 export const config = {
   port: Number(process.env.PORT ?? 4000),
-  corsOrigins: csv(process.env.CORS_ORIGIN, ["http://localhost:3000"]),
+  corsOrigins: corsOrigins.length > 0 ? corsOrigins : ["http://localhost:3000"],
   dataDir: process.env.DATA_DIR ?? "./data",
   siteUrl: process.env.SITE_URL ?? "http://localhost:3000",
   mongoUri: process.env.MONGODB_URI ?? "",
