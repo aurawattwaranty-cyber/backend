@@ -1,11 +1,13 @@
 import express from "express";
 import cookieParser from "cookie-parser";
 import cors from "cors";
-import helmet from "helmet";
+import helmetImport from "helmet";
 import morgan from "morgan";
 import { config } from "./config.js";
 import { apiRouter } from "./routes/index.js";
 import { errorHandler, notFound } from "./middleware/error.middleware.js";
+
+const helmet = helmetImport as typeof import("helmet").default;
 
 export function createApp() {
   const app = express();
