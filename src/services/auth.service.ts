@@ -222,7 +222,7 @@ export async function login(
   ).toISOString();
   const session: AuthenticatedSession = { token, user, expiresAt };
   sessions.set(token, session);
-  void persistSession(session);
+  await persistSession(session);
   return session;
 }
 
