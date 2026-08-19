@@ -8,8 +8,9 @@ import type {
   WarrantyRegistration,
 } from "../types.js";
 import { addMonths, toIsoDate } from "../utils/dates.js";
+import { defaultCustomerExperience } from "./customer-experience.defaults.js";
 
-export const DB_VERSION = 2;
+export const DB_VERSION = 4;
 
 const now = () => new Date();
 
@@ -221,6 +222,12 @@ interface SerialSeed {
   addedDaysAgo?: number;
 }
 
+interface TestSerialGroup {
+  modelId: string;
+  prefix: string;
+  count: number;
+}
+
 const SERIAL_SEEDS: SerialSeed[] = [
   { serial: "AW-HI-3KW-24001", modelId: "mdl-hp-3" },
   { serial: "AW-HI-3KW-24002", modelId: "mdl-hp-3" },
@@ -277,6 +284,25 @@ const SERIAL_SEEDS: SerialSeed[] = [
   },
 ];
 
+const CUSTOMER_TEST_SERIAL_GROUPS: TestSerialGroup[] = [
+  { modelId: "mdl-hp-3", prefix: "AW-TST-3KW-26", count: 10 },
+  { modelId: "mdl-hp-5", prefix: "AW-TST-5KW-26", count: 12 },
+  { modelId: "mdl-hp-75", prefix: "AW-TST-75KW-26", count: 8 },
+  { modelId: "mdl-hm-10", prefix: "AW-TST-10KW-26", count: 10 },
+  { modelId: "mdl-hm-15", prefix: "AW-TST-15KW-26", count: 6 },
+  { modelId: "mdl-hu-20", prefix: "AW-TST-20KW-26", count: 4 },
+];
+
+function buildCustomerTestSerialSeeds(): SerialSeed[] {
+  return CUSTOMER_TEST_SERIAL_GROUPS.flatMap((group) =>
+    Array.from({ length: group.count }, (_unused, index) => ({
+      serial: `${group.prefix}${String(index + 1).padStart(3, "0")}`,
+      modelId: group.modelId,
+      addedDaysAgo: 1 + index,
+    })),
+  );
+}
+
 function buildSerials(): SerialNumber[] {
   return SERIAL_SEEDS.map((seed, index) => {
     const model = SEED_MODELS.find((entry) => entry.id === seed.modelId);
@@ -296,6 +322,38 @@ function buildSerials(): SerialNumber[] {
       ...(seed.warrantyId ? { warrantyId: seed.warrantyId } : {}),
     };
   });
+}
+
+function buildCustomerTestSerials(): SerialNumber[] {
+  return buildCustomerTestSerialSeeds().map((seed, index) => {
+    const model = SEED_MODELS.find((entry) => entry.id === seed.modelId);
+    if (!model) {
+      throw new Error(`Missing model for customer test serial ${seed.serial}`);
+    }
+
+    return {
+      id: `srl-test-${index + 1}`,
+      serial: seed.serial,
+      modelId: model.id,
+      modelName: model.name,
+      capacityKw: model.capacityKw,
+      productType: model.productType,
+      status: seed.status ?? "available",
+      addedAt: daysAgo(seed.addedDaysAgo ?? 1 + index),
+      ...(seed.warrantyId ? { warrantyId: seed.warrantyId } : {}),
+    };
+  });
+}
+
+export function ensureCustomerTestSerials(db: Database): boolean {
+  const existingSerials = new Set(db.serials.map((serial) => serial.serial));
+  const additions = buildCustomerTestSerials().filter(
+    (serial) => !existingSerials.has(serial.serial),
+  );
+
+  if (additions.length === 0) return false;
+  db.serials.unshift(...additions);
+  return true;
 }
 
 function event(
@@ -603,12 +661,13 @@ export function createSeedDatabase(): Database {
   return {
     version: DB_VERSION,
     models: SEED_MODELS,
-    serials: buildSerials(),
+    serials: [...buildSerials(), ...buildCustomerTestSerials()],
     registrations,
     photoRequirements: SEED_PHOTO_REQUIREMENTS,
     // Bootstrapped by `ensureBootstrapAdmin` on first start — hashing is async,
     // so accounts cannot be built inline here.
     users: [],
+    customerExperience: defaultCustomerExperience(),
     nextWarrantyId: 1029,
   };
 }

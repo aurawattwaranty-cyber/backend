@@ -72,8 +72,39 @@ export function requireAdmin(
     return;
   }
 
-  if (req.user.role !== "admin") {
+  if (req.user.role !== "admin" && req.user.role !== "superadmin") {
     next(new AppError("You do not have permission to perform this action.", 403, "forbidden"));
+    return;
+  }
+
+  next();
+}
+
+/**
+ * Super admin only — owns the customer-experience configuration.
+ *
+ * Kept separate from `requireAdmin` on purpose: day-to-day admins run the
+ * catalogue and stock, but changing what every customer sees on the public
+ * pages is a narrower privilege.
+ */
+export function requireSuperAdmin(
+  req: Request,
+  _res: Response,
+  next: NextFunction,
+): void {
+  if (!req.user) {
+    next(new AppError("Please sign in to continue.", 401, "unauthorized"));
+    return;
+  }
+
+  if (req.user.role !== "superadmin") {
+    next(
+      new AppError(
+        "Only a super admin can change what customers see.",
+        403,
+        "forbidden",
+      ),
+    );
     return;
   }
 
@@ -83,9 +114,10 @@ export function requireAdmin(
 /**
  * Allows any signed-in staff account through.
  *
- * Verifiers review registrations and record decisions; only admins manage the
- * catalogue, serial stock and other accounts. Routes pick the guard that
- * matches the level of access they need.
+ * Verifiers review registrations and record decisions; admins also manage the
+ * catalogue, serial stock and other accounts; super admins additionally own the
+ * public-facing field configuration. Routes pick the guard that matches the
+ * level of access they need.
  */
 export function requireStaff(
   req: Request,
@@ -97,7 +129,11 @@ export function requireStaff(
     return;
   }
 
-  if (req.user.role !== "admin" && req.user.role !== "verifier") {
+  if (
+    req.user.role !== "superadmin" &&
+    req.user.role !== "admin" &&
+    req.user.role !== "verifier"
+  ) {
     next(new AppError("You do not have permission to perform this action.", 403, "forbidden"));
     return;
   }

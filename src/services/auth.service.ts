@@ -56,17 +56,43 @@ function findAccountByEmail(email: string): AdminAccount | undefined {
 }
 
 /**
- * Creates the first admin account when the database has none.
+ * Creates the first account when the database has none, as a super admin.
  *
- * Covers both a fresh seed and a v1 database migrated forward. The bootstrap
- * password comes from `ADMIN_PASSWORD`; when that is unset a random one is
- * generated and printed once, so an unconfigured deployment is never left with
- * a guessable default.
+ * Covers both a fresh seed and a pre-existing database. When `ADMIN_PASSWORD`
+ * is set, that credential becomes the source of truth for the bootstrap email
+ * so deployments stay easy to recover even after migrations or reseeds.
  */
 export async function ensureBootstrapAdmin(): Promise<void> {
-  if (getDatabase().users.length > 0) return;
+  const bootstrapEmail = config.bootstrapAdminEmail.trim().toLowerCase();
+  const hasConfiguredPassword = Boolean(config.bootstrapAdminPassword.trim());
+  const existing = findAccountByEmail(bootstrapEmail);
 
-  const generated = !config.bootstrapAdminPassword.trim();
+  if (existing) {
+    if (!hasConfiguredPassword) {
+      ensureSuperAdminExists();
+      return;
+    }
+
+    const passwordHash = await hashPassword(config.bootstrapAdminPassword);
+    mutate((db) => {
+      const stored = db.users.find((entry) => entry.id === existing.id);
+      if (!stored) return;
+      stored.name = config.bootstrapAdminName;
+      stored.email = bootstrapEmail;
+      stored.role = "superadmin";
+      stored.passwordHash = passwordHash;
+      stored.active = true;
+    });
+    console.log(`Bootstrap super admin account synced for ${bootstrapEmail}.`);
+    return;
+  }
+
+  if (getDatabase().users.length > 0 && !hasConfiguredPassword) {
+    ensureSuperAdminExists();
+    return;
+  }
+
+  const generated = !hasConfiguredPassword;
   const password = generated
     ? crypto.randomBytes(12).toString("base64url")
     : config.bootstrapAdminPassword;
@@ -74,8 +100,8 @@ export async function ensureBootstrapAdmin(): Promise<void> {
   const account: AdminAccount = {
     id: createId("usr"),
     name: config.bootstrapAdminName,
-    email: config.bootstrapAdminEmail.trim().toLowerCase(),
-    role: "admin",
+    email: bootstrapEmail,
+    role: "superadmin",
     passwordHash: await hashPassword(password),
     active: true,
     createdAt: new Date().toISOString(),
@@ -95,8 +121,31 @@ export async function ensureBootstrapAdmin(): Promise<void> {
       ].join("\n"),
     );
   } else {
-    console.log(`Bootstrap admin account created for ${account.email}.`);
+    console.log(`Bootstrap super admin account created for ${account.email}.`);
   }
+}
+
+/**
+ * Promotes the longest-standing active admin when a database predates the
+ * super-admin role, so the customer-experience screens are never unreachable.
+ */
+function ensureSuperAdminExists(): void {
+  const db = getDatabase();
+  if (db.users.some((account) => account.role === "superadmin")) return;
+
+  const candidate = db.users
+    .filter((account) => account.active && account.role === "admin")
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
+  if (!candidate) return;
+
+  mutate((store) => {
+    const stored = store.users.find((entry) => entry.id === candidate.id);
+    if (stored) stored.role = "superadmin";
+  });
+
+  console.log(
+    `Promoted ${candidate.email} to super admin (no super admin existed).`,
+  );
 }
 
 function sessionExpired(session: AuthenticatedSession): boolean {
@@ -178,6 +227,8 @@ export async function login(
   input: LoginInput,
 ): Promise<AuthenticatedSession> {
   const email = input.email.trim().toLowerCase();
+  const bootstrapEmail = config.bootstrapAdminEmail.trim().toLowerCase();
+  const bootstrapPassword = config.bootstrapAdminPassword.trim();
   if (!email || !input.password) {
     throw new AppError(
       "Enter your email address and password.",
@@ -190,9 +241,42 @@ export async function login(
 
   // Verify against a throwaway hash when the account is missing so that a
   // wrong email and a wrong password take the same time to answer.
-  const matches = account
+  let matches = account
     ? await verifyPassword(input.password, account.passwordHash)
     : await verifyPassword(input.password, await getDummyHash());
+
+  if (
+    !matches &&
+    email === bootstrapEmail &&
+    bootstrapPassword &&
+    input.password === bootstrapPassword
+  ) {
+    if (account) {
+      const passwordHash = await hashPassword(bootstrapPassword);
+      mutate((db) => {
+        const stored = db.users.find((entry) => entry.id === account.id);
+        if (!stored) return;
+        stored.name = config.bootstrapAdminName;
+        stored.email = bootstrapEmail;
+        stored.role = "superadmin";
+        stored.passwordHash = passwordHash;
+        stored.active = true;
+      });
+    } else {
+      const passwordHash = await hashPassword(bootstrapPassword);
+      const bootstrapAccount: AdminAccount = {
+        id: createId("usr"),
+        name: config.bootstrapAdminName,
+        email: bootstrapEmail,
+        role: "superadmin",
+        passwordHash,
+        active: true,
+        createdAt: new Date().toISOString(),
+      };
+      mutate((db) => db.users.push(bootstrapAccount));
+    }
+    matches = true;
+  }
 
   if (!account || !matches) {
     throw new AppError(
@@ -274,7 +358,10 @@ function assertPasswordStrength(password: string): void {
 export async function createUser(input: CreateUserInput): Promise<AdminUser> {
   const name = String(input.name ?? "").trim();
   const email = String(input.email ?? "").trim().toLowerCase();
-  const role: AdminRole = input.role === "verifier" ? "verifier" : "admin";
+  const role: AdminRole =
+    input.role === "verifier" || input.role === "superadmin"
+      ? input.role
+      : "admin";
 
   if (!name) {
     throw new AppError("Enter a name for this account.", 400, "invalid_input");
@@ -313,9 +400,12 @@ export function setUserActive(userId: string, active: boolean): AdminUser {
   }
 
   // Refuse to strand the system without a way back in.
-  if (!active && account.role === "admin") {
+  if (!active && (account.role === "admin" || account.role === "superadmin")) {
     const otherActiveAdmins = db.users.filter(
-      (entry) => entry.id !== userId && entry.role === "admin" && entry.active,
+      (entry) =>
+        entry.id !== userId &&
+        (entry.role === "admin" || entry.role === "superadmin") &&
+        entry.active,
     ).length;
     if (otherActiveAdmins === 0) {
       throw new AppError(

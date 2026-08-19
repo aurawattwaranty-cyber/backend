@@ -140,7 +140,12 @@ export interface SerialValidationResult {
   existingWarrantyId?: string;
 }
 
-export type AdminRole = "admin" | "verifier";
+/**
+ * `superadmin` outranks `admin`: it owns the customer-experience configuration
+ * on top of everything an admin can do. Guards treat it as a superset, so no
+ * existing admin route needs to enumerate both.
+ */
+export type AdminRole = "superadmin" | "admin" | "verifier";
 
 export interface AdminUser {
   id: string;
@@ -213,6 +218,66 @@ export interface BulkImportResult {
   errors: { rowNumber: number; serial: string; error: string }[];
 }
 
+/* ------------------------------------------------------------------ *
+ * Customer experience configuration
+ *
+ * The public Register Warranty form and Check Status page render from this
+ * config rather than from hard-coded copy, so a super admin can relabel,
+ * reorder, hide or require the fields a customer sees without a deploy.
+ * ------------------------------------------------------------------ */
+
+export type CustomerFieldSection = "customer" | "installer" | "installation";
+
+export interface CustomerFieldConfig {
+  /** Stable dotted path into the registration draft, e.g. `customer.phone`. */
+  id: string;
+  section: CustomerFieldSection;
+  label: string;
+  placeholder: string;
+  hint: string;
+  required: boolean;
+  visible: boolean;
+  order: number;
+  /**
+   * Locked fields underpin the warranty record itself — they can be relabelled
+   * but never hidden or made optional.
+   */
+  locked: boolean;
+}
+
+export interface CustomerSectionConfig {
+  id: CustomerFieldSection;
+  title: string;
+  description: string;
+  order: number;
+}
+
+export interface StatusBlockConfig {
+  id: string;
+  label: string;
+  visible: boolean;
+  order: number;
+  locked: boolean;
+}
+
+export interface CustomerExperienceConfig {
+  register: {
+    heading: string;
+    subheading: string;
+    sections: CustomerSectionConfig[];
+    fields: CustomerFieldConfig[];
+  };
+  status: {
+    heading: string;
+    subheading: string;
+    searchPlaceholder: string;
+    helpText: string;
+    blocks: StatusBlockConfig[];
+  };
+  updatedAt: string;
+  updatedBy: string;
+}
+
 export interface Database {
   version: number;
   models: ProductModel[];
@@ -220,6 +285,7 @@ export interface Database {
   registrations: WarrantyRegistration[];
   photoRequirements: PhotoRequirement[];
   users: AdminAccount[];
+  customerExperience: CustomerExperienceConfig;
   nextWarrantyId: number;
 }
 

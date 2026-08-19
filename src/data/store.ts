@@ -4,7 +4,12 @@ import { fileURLToPath } from "node:url";
 import { config } from "../config.js";
 import { AppError } from "../utils/errors.js";
 import type { Database } from "../types.js";
-import { createSeedDatabase, DB_VERSION } from "./seed.js";
+import {
+  createSeedDatabase,
+  DB_VERSION,
+  ensureCustomerTestSerials,
+} from "./seed.js";
+import { defaultCustomerExperience } from "./customer-experience.defaults.js";
 import { getMongoCollection, isMongoEnabled, type StoredDatabaseDocument } from "./mongo.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -50,6 +55,16 @@ function migrate(db: Database): boolean {
   // v1 -> v2: admin accounts moved out of config and into the database.
   if (!Array.isArray(db.users)) {
     db.users = [];
+    changed = true;
+  }
+
+  if (ensureCustomerTestSerials(db)) {
+    changed = true;
+  }
+
+  // v3 -> v4: the public form and status page became super-admin configurable.
+  if (!db.customerExperience) {
+    db.customerExperience = defaultCustomerExperience();
     changed = true;
   }
 
