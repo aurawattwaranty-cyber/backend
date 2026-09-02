@@ -1,4 +1,4 @@
-export type ProductType = "inverter" | "battery";
+export type ProductType = "inverter" | "battery" | "combo";
 
 export interface ProductModel {
   id: string;

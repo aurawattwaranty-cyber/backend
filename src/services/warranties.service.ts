@@ -155,7 +155,8 @@ export async function createWarrantyRegistration(
     );
   }
 
-  const id = String(db.nextWarrantyId);
+  const registrationYear = new Date().getFullYear();
+  const id = `AWR-WC-${registrationYear}-${String(db.nextWarrantyId).padStart(6, "0")}`;
   const registration: WarrantyRegistration = {
     id,
     serial,

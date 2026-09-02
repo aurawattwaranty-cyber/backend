@@ -7,6 +7,7 @@ import type { Database } from "../types.js";
 import {
   createSeedDatabase,
   DB_VERSION,
+  SEED_MODELS,
   ensureCustomerTestSerials,
 } from "./seed.js";
 import { defaultCustomerExperience } from "./customer-experience.defaults.js";
@@ -51,6 +52,12 @@ function isDatabaseShape(value: unknown): value is Database {
  */
 function migrate(db: Database): boolean {
   let changed = false;
+
+  // v4 -> v5: replace the placeholder catalog with the client-approved models.
+  if (db.version < 5) {
+    db.models = SEED_MODELS.map((model) => ({ ...model }));
+    changed = true;
+  }
 
   // v1 -> v2: admin accounts moved out of config and into the database.
   if (!Array.isArray(db.users)) {

@@ -10,7 +10,7 @@ import type {
 import { addMonths, toIsoDate } from "../utils/dates.js";
 import { defaultCustomerExperience } from "./customer-experience.defaults.js";
 
-export const DB_VERSION = 4;
+export const DB_VERSION = 5;
 
 const now = () => new Date();
 
@@ -132,86 +132,28 @@ export const SEED_PHOTO_REQUIREMENTS: PhotoRequirement[] = [
 ];
 
 export const SEED_MODELS: ProductModel[] = [
-  {
-    id: "mdl-hp-3",
-    series: "AuraWatt HybridPro",
-    name: "AuraWatt HybridPro 3kW",
-    capacityKw: 3,
-    productType: "inverter",
-    warrantyMonths: 60,
-    active: true,
-    createdAt: daysAgo(420),
-  },
-  {
-    id: "mdl-hp-5",
-    series: "AuraWatt HybridPro",
-    name: "AuraWatt HybridPro 5kW",
-    capacityKw: 5,
-    productType: "inverter",
-    warrantyMonths: 60,
-    active: true,
-    createdAt: daysAgo(420),
-  },
-  {
-    id: "mdl-hp-75",
-    series: "AuraWatt HybridPro",
-    name: "AuraWatt HybridPro 7.5kW",
-    capacityKw: 7.5,
-    productType: "inverter",
-    warrantyMonths: 60,
-    active: true,
-    createdAt: daysAgo(400),
-  },
-  {
-    id: "mdl-hm-10",
-    series: "AuraWatt HybridMax",
-    name: "AuraWatt HybridMax 10kW",
-    capacityKw: 10,
-    productType: "inverter",
-    warrantyMonths: 84,
-    active: true,
-    createdAt: daysAgo(360),
-  },
-  {
-    id: "mdl-hm-15",
-    series: "AuraWatt HybridMax",
-    name: "AuraWatt HybridMax 15kW",
-    capacityKw: 15,
-    productType: "inverter",
-    warrantyMonths: 84,
-    active: true,
-    createdAt: daysAgo(360),
-  },
-  {
-    id: "mdl-hu-20",
-    series: "AuraWatt HybridUltra",
-    name: "AuraWatt HybridUltra 20kW",
-    capacityKw: 20,
-    productType: "inverter",
-    warrantyMonths: 120,
-    active: true,
-    createdAt: daysAgo(240),
-  },
-  {
-    id: "mdl-pc-51",
-    series: "AuraWatt PowerCell",
-    name: "AuraWatt PowerCell 5.1kWh",
-    capacityKw: 5.1,
-    productType: "battery",
-    warrantyMonths: 120,
-    active: true,
-    createdAt: daysAgo(300),
-  },
-  {
-    id: "mdl-pc-102",
-    series: "AuraWatt PowerCell",
-    name: "AuraWatt PowerCell 10.2kWh",
-    capacityKw: 10.2,
-    productType: "battery",
-    warrantyMonths: 120,
-    active: true,
-    createdAt: daysAgo(300),
-  },
+  { id: "mdl-sp-l2-2000", series: "SP SERIES", name: "AW-SP-L2-2000", capacityKw: 2, productType: "inverter", warrantyMonths: 60, active: true, createdAt: daysAgo(1) },
+  { id: "mdl-sp-l1-3600", series: "SP SERIES", name: "AW-SP-L1-3600", capacityKw: 3.6, productType: "inverter", warrantyMonths: 60, active: true, createdAt: daysAgo(1) },
+  { id: "mdl-sp-l1-6500", series: "SP SERIES", name: "AW-SP-L1-6500", capacityKw: 6.5, productType: "inverter", warrantyMonths: 60, active: true, createdAt: daysAgo(1) },
+  { id: "mdl-sp-3000", series: "SP SERIES", name: "AW-SP-3000", capacityKw: 3, productType: "inverter", warrantyMonths: 96, active: true, createdAt: daysAgo(1) },
+  { id: "mdl-sp-4000", series: "SP SERIES", name: "AW-SP-4000", capacityKw: 4, productType: "inverter", warrantyMonths: 96, active: true, createdAt: daysAgo(1) },
+  { id: "mdl-sp-5000", series: "SP SERIES", name: "AW-SP-5000", capacityKw: 5, productType: "inverter", warrantyMonths: 96, active: true, createdAt: daysAgo(1) },
+  { id: "mdl-sp-6000", series: "SP SERIES", name: "AW-SP-6000", capacityKw: 6, productType: "inverter", warrantyMonths: 96, active: true, createdAt: daysAgo(1) },
+  { id: "mdl-sp-8000", series: "SP SERIES", name: "AW-SP-8000", capacityKw: 8, productType: "inverter", warrantyMonths: 60, active: true, createdAt: daysAgo(1) },
+  { id: "mdl-sp-10000", series: "SP SERIES", name: "AW-SP-10000", capacityKw: 10, productType: "inverter", warrantyMonths: 60, active: true, createdAt: daysAgo(1) },
+  { id: "mdl-sp-11000", series: "SP SERIES", name: "AW-SP-11000", capacityKw: 11, productType: "inverter", warrantyMonths: 60, active: true, createdAt: daysAgo(1) },
+  { id: "mdl-all-in-one-3600", series: "ALL-IN-ONE SERIES", name: "AW-SP-L1-3600-C", capacityKw: 3.6, productType: "combo", warrantyMonths: 60, active: true, createdAt: daysAgo(1) },
+  { id: "mdl-tp-l-8000", series: "TP-L SERIES", name: "AW-TP 8000-L", capacityKw: 8, productType: "inverter", warrantyMonths: 96, active: true, createdAt: daysAgo(1) },
+  { id: "mdl-tp-l-10000", series: "TP-L SERIES", name: "AW-TP 10000-L", capacityKw: 10, productType: "inverter", warrantyMonths: 96, active: true, createdAt: daysAgo(1) },
+  { id: "mdl-tp-l-12000", series: "TP-L SERIES", name: "AW-TP 12000-L", capacityKw: 12, productType: "inverter", warrantyMonths: 96, active: true, createdAt: daysAgo(1) },
+  { id: "mdl-tp-h-15000", series: "TP-H SERIES", name: "AW-TP-15000-H", capacityKw: 15, productType: "inverter", warrantyMonths: 96, active: true, createdAt: daysAgo(1) },
+  { id: "mdl-tp-h-20000", series: "TP-H SERIES", name: "AW-TP-20000-H", capacityKw: 20, productType: "inverter", warrantyMonths: 96, active: true, createdAt: daysAgo(1) },
+  { id: "mdl-tp-h-25000", series: "TP-H SERIES", name: "AW-TP-25000-H", capacityKw: 25, productType: "inverter", warrantyMonths: 96, active: true, createdAt: daysAgo(1) },
+  { id: "mdl-tp-h-30000", series: "TP-H SERIES", name: "AW-TP-30000-H", capacityKw: 30, productType: "inverter", warrantyMonths: 96, active: true, createdAt: daysAgo(1) },
+  { id: "mdl-tp-h-50000", series: "TP-H SERIES", name: "AW-TP-50000-H", capacityKw: 50, productType: "inverter", warrantyMonths: 96, active: true, createdAt: daysAgo(1) },
+  { id: "mdl-lfp-12-8", series: "LFP SERIES", name: "AW-LFP-12.8", capacityKw: 1.2, productType: "battery", warrantyMonths: 60, active: true, createdAt: daysAgo(1) },
+  { id: "mdl-lfp-25-6", series: "LFP SERIES", name: "AW-LFP-25.6", capacityKw: 2.56, productType: "battery", warrantyMonths: 60, active: true, createdAt: daysAgo(1) },
+  { id: "mdl-lfp-51-2", series: "LFP SERIES", name: "AW-LFP-51.2", capacityKw: 5.12, productType: "battery", warrantyMonths: 60, active: true, createdAt: daysAgo(1) },
 ];
 
 interface SerialSeed {

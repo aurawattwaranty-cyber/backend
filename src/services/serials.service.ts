@@ -367,11 +367,11 @@ async function parseBulkImportContent(
     if (!model) {
       return { ...row, valid: false, error: "Unknown product model" };
     }
-    if (productType !== "inverter" && productType !== "battery") {
+    if (productType !== "inverter" && productType !== "battery" && productType !== "combo") {
       return {
         ...row,
         valid: false,
-        error: "Product type must be inverter or battery",
+        error: "Product type must be inverter, battery or combo",
       };
     }
 

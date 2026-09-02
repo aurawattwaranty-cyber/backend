@@ -16,7 +16,7 @@ productsRouter.get(
     const activeOnly = String(req.query.activeOnly ?? "false") === "true";
     const productType = req.query.productType ? String(req.query.productType) : undefined;
     const options: Parameters<typeof getProductModels>[0] = { activeOnly };
-    if (productType === "inverter" || productType === "battery") {
+    if (productType === "inverter" || productType === "battery" || productType === "combo") {
       options.productType = productType;
     }
     const models = await getProductModels(options);
