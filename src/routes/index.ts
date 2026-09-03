@@ -6,6 +6,7 @@ import { healthRouter } from "./health.routes.js";
 import { photoRequirementsRouter } from "./photo-requirements.routes.js";
 import { productsRouter } from "./products.routes.js";
 import { serialsRouter } from "./serials.routes.js";
+import { seriesRouter } from "./series.routes.js";
 import { uploadsRouter } from "./uploads.routes.js";
 import { warrantiesRouter } from "./warranties.routes.js";
 
@@ -18,6 +19,7 @@ apiRouter.use("/customer-experience", customerExperienceRouter);
 apiRouter.use("/models", productsRouter);
 apiRouter.use("/photo-requirements", photoRequirementsRouter);
 apiRouter.use("/serials", serialsRouter);
+apiRouter.use("/series", seriesRouter);
 apiRouter.use("/uploads", uploadsRouter);
 apiRouter.use("/warranties", warrantiesRouter);
 
@@ -30,6 +32,7 @@ apiRouter.get("/", (_req, res) => {
       "/api/auth",
       "/api/customer-experience",
       "/api/models",
+      "/api/series",
       "/api/photo-requirements",
       "/api/serials",
       "/api/uploads",

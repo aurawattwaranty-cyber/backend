@@ -22,7 +22,28 @@ export interface SerialNumber {
   productType: ProductType;
   status: SerialStatus;
   addedAt: string;
+  /** Series selected by the admin when this serial was imported. */
+  seriesId?: string;
+  seriesName?: string;
+  /** Source file that added this serial, when imported in bulk. */
+  importFileId?: string;
   warrantyId?: string;
+}
+
+export interface ProductSeries {
+  id: string;
+  name: string;
+  active: boolean;
+  createdAt: string;
+}
+
+export interface SerialImportFile {
+  id: string;
+  seriesId: string;
+  fileName: string;
+  uploadedAt: string;
+  serialCount: number;
+  importedCount: number;
 }
 
 export type WarrantyStatus =
@@ -152,6 +173,8 @@ export interface AdminUser {
   name: string;
   email: string;
   role: AdminRole;
+  active?: boolean;
+  createdAt?: string;
 }
 
 /**
@@ -207,6 +230,8 @@ export interface BulkImportRow {
 
 export interface BulkImportPreview {
   fileName: string;
+  seriesId?: string;
+  modelId?: string;
   rows: BulkImportRow[];
   validCount: number;
   invalidCount: number;
@@ -282,6 +307,8 @@ export interface Database {
   version: number;
   models: ProductModel[];
   serials: SerialNumber[];
+  series: ProductSeries[];
+  serialImportFiles: SerialImportFile[];
   registrations: WarrantyRegistration[];
   photoRequirements: PhotoRequirement[];
   users: AdminAccount[];
@@ -334,7 +361,7 @@ export interface WarrantyQuery {
 }
 
 export interface ApproveWarrantyInput {
-  modelId: string;
+  modelName: string;
   startDate?: string;
   durationMonths?: number;
   note?: string;

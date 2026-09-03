@@ -34,6 +34,21 @@ authRouter.post(
   }),
 );
 
+// Public request flow: the account is created inactive and cannot log in
+// until an existing admin authorizes it from the account management screen.
+authRouter.post(
+  "/access-requests",
+  asyncHandler(async (req, res) => {
+    const created = await createUser({
+      name: String(req.body?.name ?? ""),
+      email: String(req.body?.email ?? ""),
+      password: String(req.body?.password ?? ""),
+      role: "admin",
+    });
+    res.status(201).json({ item: created });
+  }),
+);
+
 authRouter.get(
   "/session",
   optionalAuth,
@@ -95,7 +110,11 @@ authRouter.patch(
   requireAuth,
   requireAdmin,
   asyncHandler(async (req, res) => {
-    const updated = setUserActive(String(req.params.id), Boolean(req.body?.active));
+    const updated = setUserActive(
+      String(req.params.id),
+      Boolean(req.body?.active),
+      req.user!.id,
+    );
     res.json({ item: updated });
   }),
 );

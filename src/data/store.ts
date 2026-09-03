@@ -4,13 +4,7 @@ import { fileURLToPath } from "node:url";
 import { config } from "../config.js";
 import { AppError } from "../utils/errors.js";
 import type { Database } from "../types.js";
-import {
-  createSeedDatabase,
-  DB_VERSION,
-  SEED_MODELS,
-  ensureCustomerTestSerials,
-} from "./seed.js";
-import { defaultCustomerExperience } from "./customer-experience.defaults.js";
+import { createSeedDatabase, DB_VERSION } from "./seed.js";
 import { getMongoCollection, isMongoEnabled, type StoredDatabaseDocument } from "./mongo.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -46,40 +40,26 @@ function isDatabaseShape(value: unknown): value is Database {
 /**
  * Brings a stored database up to `DB_VERSION` in place.
  *
- * Stored data is never discarded on a version bump — a shape check that
- * rejected old versions would silently re-seed over live registrations.
+ * Older snapshots are intentionally replaced with the blank workspace so the
+ * checked-in seed data never comes back after a deploy or restart.
  * Returns true when something changed and the result needs persisting.
  */
 function migrate(db: Database): boolean {
-  let changed = false;
-
-  // v4 -> v5: replace the placeholder catalog with the client-approved models.
-  if (db.version < 5) {
-    db.models = SEED_MODELS.map((model) => ({ ...model }));
-    changed = true;
+  if (db.version < 6) {
+    Object.assign(db, createSeedDatabase());
+    return true;
   }
 
-  // v1 -> v2: admin accounts moved out of config and into the database.
-  if (!Array.isArray(db.users)) {
-    db.users = [];
+  let changed = db.version !== DB_VERSION;
+  if (!Array.isArray(db.series)) {
+    db.series = [];
     changed = true;
   }
-
-  if (ensureCustomerTestSerials(db)) {
+  if (!Array.isArray(db.serialImportFiles)) {
+    db.serialImportFiles = [];
     changed = true;
   }
-
-  // v3 -> v4: the public form and status page became super-admin configurable.
-  if (!db.customerExperience) {
-    db.customerExperience = defaultCustomerExperience();
-    changed = true;
-  }
-
-  if (db.version !== DB_VERSION) {
-    db.version = DB_VERSION;
-    changed = true;
-  }
-
+  db.version = DB_VERSION;
   return changed;
 }
 
@@ -102,13 +82,13 @@ function loadFile(): Database {
         return parsed;
       }
     } catch {
-      // Fall through to a fresh seed.
+      // Fall through to a fresh empty workspace.
     }
   }
 
-  const seeded = createSeedDatabase();
-  persistFile(seeded);
-  return seeded;
+  const fresh = createSeedDatabase();
+  persistFile(fresh);
+  return fresh;
 }
 
 async function loadMongo(): Promise<Database> {
@@ -122,13 +102,13 @@ async function loadMongo(): Promise<Database> {
     return db;
   }
 
-  const seeded = createSeedDatabase();
+  const fresh = createSeedDatabase();
   await collection.updateOne(
     { _id: PRIMARY_DOCUMENT_ID },
-    { $set: seeded },
+    { $set: fresh },
     { upsert: true },
   );
-  return seeded;
+  return fresh;
 }
 
 function stripDocumentId(document: StoredDatabaseDocument): Database {

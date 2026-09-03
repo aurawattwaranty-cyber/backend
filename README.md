@@ -26,4 +26,4 @@ photo requirements, dashboard stats, and warranty review actions.
 ## Storage
 
 The backend persists data to `backend/data/database.json`. If the file is
-missing, a seeded demo dataset is recreated automatically on startup.
+missing, a blank workspace is created automatically on startup.

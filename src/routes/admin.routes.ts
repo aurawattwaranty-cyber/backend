@@ -6,7 +6,7 @@ import { resetDatabase } from "../data/store.js";
 export const adminRouter = Router();
 
 adminRouter.post(
-  "/reset-demo",
+  "/reset",
   requireAuth,
   requireAdmin,
   asyncHandler(async (_req, res) => {

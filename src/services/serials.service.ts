@@ -9,7 +9,9 @@ import type {
   SerialStatus,
   SerialValidationResult,
 } from "../types.js";
+import { getSeriesOrThrow } from "./series.service.js";
 import ExcelJS from "exceljs";
+import { inflateRawSync } from "node:zlib";
 import { AppError } from "../utils/errors.js";
 import { paginate } from "../utils/pagination.js";
 import { buildSerialRecord, inferModelForSerial } from "./serial-mapping.js";
@@ -28,9 +30,6 @@ const BULK_IMPORT_COLUMNS = [
 
 export const BULK_IMPORT_TEMPLATE = [
   BULK_IMPORT_COLUMNS.join(","),
-  "AW-HI-5KW-24101,AuraWatt HybridPro 5kW,5,inverter",
-  "AW-HI-10KW-24101,AuraWatt HybridMax 10kW,10,inverter",
-  "AW-BT-51-24101,AuraWatt PowerCell 5.1kWh,5.1,battery",
 ].join("\n");
 
 export function parseSerialQueryValue(value: unknown, fallback: number): number {
@@ -122,7 +121,9 @@ export async function validateSerial(
   return {
     status: "available",
     serial: clone(record),
-    message: `${record.modelName} verified and available for registration.`,
+    message: record.modelName
+      ? `${record.modelName} verified and available for registration.`
+      : "Serial verified and available for registration. The product model will be confirmed during admin review.",
   };
 }
 
@@ -150,7 +151,19 @@ export async function getSerials(
     })
     .sort((a, b) => b.addedAt.localeCompare(a.addedAt));
 
-  return paginate(clone(filtered), page, pageSize);
+  const seriesNames = new Map(
+    getDatabase().series.map((entry) => [entry.id, entry.name]),
+  );
+  return paginate(
+    clone(filtered).map((serial) => {
+      const seriesName = serial.seriesId
+        ? seriesNames.get(serial.seriesId)
+        : undefined;
+      return seriesName ? { ...serial, seriesName } : serial;
+    }),
+    page,
+    pageSize,
+  );
 }
 
 export async function getSerialCounts(): Promise<{
@@ -269,23 +282,82 @@ async function readWorkbookGrid(base64: string): Promise<string[][]> {
   return grid;
 }
 
+function decodeXmlText(value: string): string {
+  return value
+    .replace(/<\/w:p>|<w:br\s*\/?>/g, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .split(/\r?\n/)
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
+/** Extracts Word text from the document.xml entry of a DOCX ZIP archive. */
+function readDocxText(base64: string): string {
+  const archive = Buffer.from(base64, "base64");
+  const end = archive.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+  if (end < 0) throw new AppError("That DOCX file could not be read.", 400, "unreadable_document");
+  const entries = archive.readUInt16LE(end + 10);
+  const centralOffset = archive.readUInt32LE(end + 16);
+  let cursor = centralOffset;
+  for (let index = 0; index < entries; index += 1) {
+    if (archive.readUInt32LE(cursor) !== 0x02014b50) break;
+    const method = archive.readUInt16LE(cursor + 10);
+    const compressedSize = archive.readUInt32LE(cursor + 20);
+    const nameLength = archive.readUInt16LE(cursor + 28);
+    const extraLength = archive.readUInt16LE(cursor + 30);
+    const commentLength = archive.readUInt16LE(cursor + 32);
+    const name = archive.toString("utf8", cursor + 46, cursor + 46 + nameLength);
+    const localOffset = archive.readUInt32LE(cursor + 42);
+    if (name === "word/document.xml") {
+      const localNameLength = archive.readUInt16LE(localOffset + 26);
+      const localExtraLength = archive.readUInt16LE(localOffset + 28);
+      const start = localOffset + 30 + localNameLength + localExtraLength;
+      const compressed = archive.subarray(start, start + compressedSize);
+      const xml = method === 8 ? inflateRawSync(compressed).toString("utf8") : compressed.toString("utf8");
+      return decodeXmlText(xml);
+    }
+    cursor += 46 + nameLength + extraLength + commentLength;
+  }
+  throw new AppError("That DOCX file has no readable document content.", 400, "empty_file");
+}
+
+function readPdfText(base64: string): string {
+  const raw = Buffer.from(base64, "base64").toString("latin1");
+  const values: string[] = [];
+  for (const match of raw.matchAll(/\(([^()]*)\)\s*T[Jj]/g)) {
+    values.push((match[1] ?? "").replace(/\\([\\()])/g, "$1"));
+  }
+  const text = values.join("\n").replace(/\\n/g, "\n").trim();
+  if (!text) throw new AppError("That PDF has no selectable text. Export it as CSV/XLSX or use a text PDF.", 400, "unreadable_document");
+  return text;
+}
+
 async function parseBulkImportContent(
   fileName: string,
   content: string,
   encoding: "text" | "base64",
+  seriesId?: string,
+  modelId?: string,
 ): Promise<BulkImportPreview> {
   const name = fileName.toLowerCase();
   const isWorkbook = /\.(xlsx|xls)$/.test(name);
+  const isDocument = /\.(pdf|docx|doc)$/.test(name);
 
-  if (!isWorkbook && !/\.(csv|tsv|txt)$/.test(name)) {
+  if (!isWorkbook && !isDocument && !/\.(csv|tsv|txt)$/.test(name)) {
     throw new AppError(
-      "Unsupported file type. Upload a .csv, .tsv, .txt, .xlsx or .xls file.",
+      "Unsupported file type. Upload a .csv, .tsv, .txt, .xlsx, .xls, .pdf, .doc or .docx file.",
       400,
       "unsupported_file",
     );
   }
 
-  if (isWorkbook && encoding !== "base64") {
+  if ((isWorkbook || isDocument) && encoding !== "base64") {
     throw new AppError(
       "Excel workbooks must be uploaded as binary content.",
       400,
@@ -293,9 +365,17 @@ async function parseBulkImportContent(
     );
   }
 
+  const documentText = name.endsWith(".docx")
+    ? readDocxText(content)
+    : name.endsWith(".pdf")
+      ? readPdfText(content)
+      : name.endsWith(".doc")
+        ? Buffer.from(content, "base64").toString("latin1").replace(/\0/g, "\n")
+      : "";
+  const rawText = documentText || content;
   const grid = isWorkbook
     ? await readWorkbookGrid(content)
-    : content
+    : rawText
         .split(/\r?\n/)
         .map((line) => line.trim())
         .filter(Boolean)
@@ -305,16 +385,33 @@ async function parseBulkImportContent(
     throw new AppError("That file is empty.", 400, "empty_file");
   }
 
-  const header = (grid[0] ?? []).map((cell) =>
+  const db = getDatabase();
+  const selectedSeries = seriesId ? getSeriesOrThrow(seriesId) : undefined;
+  const selectedModel = modelId
+    ? db.models.find((entry) => entry.id === modelId)
+    : undefined;
+  if (modelId && !selectedModel) {
+    throw new AppError("Select a valid product model.", 400, "invalid_model");
+  }
+  if (selectedSeries && selectedModel && selectedModel.series.toLowerCase() !== selectedSeries.name.toLowerCase()) {
+    throw new AppError("The selected model does not belong to this series.", 400, "model_series_mismatch");
+  }
+
+  let header = (grid[0] ?? []).map((cell) =>
     cell.toLowerCase().replace(/[\s-]+/g, "_"),
   );
   const hasHeader = header.includes("serial_number") || header.includes("serial");
   if (!hasHeader) {
-    throw new AppError(
-      `The first row must be a header row: ${BULK_IMPORT_COLUMNS.join(", ")}.`,
-      400,
-      "missing_header",
-    );
+    if (selectedSeries) {
+      grid.unshift(["serial_number"]);
+      header = ["serial_number"];
+    } else {
+      throw new AppError(
+        `The first row must be a header row: ${BULK_IMPORT_COLUMNS.join(", ")}.`,
+        400,
+        "missing_header",
+      );
+    }
   }
 
   const columnIndex = (...names: string[]) =>
@@ -325,12 +422,11 @@ async function parseBulkImportContent(
   const capacityAt = columnIndex("capacity_kw", "capacity");
   const typeAt = columnIndex("product_type", "type");
 
-  const db = getDatabase();
   const seenInFile = new Set<string>();
 
   const rows: BulkImportRow[] = grid.slice(1).map((cells, index) => {
     const serial = normaliseSerial(cells[serialAt] ?? "");
-    const modelName = (modelAt >= 0 ? cells[modelAt] : "")?.trim() ?? "";
+    const modelName = selectedModel?.name ?? ((modelAt >= 0 ? cells[modelAt] : "")?.trim() ?? "");
     const capacityKw = (capacityAt >= 0 ? cells[capacityAt] : "")?.trim() ?? "";
     const productType = (
       (typeAt >= 0 ? cells[typeAt] : "")?.trim() || "inverter"
@@ -358,13 +454,13 @@ async function parseBulkImportContent(
     if (db.serials.some((entry) => entry.serial === serial)) {
       return { ...row, valid: false, error: "Already in the inventory" };
     }
-    if (!modelName) {
+    if (!modelName && !selectedSeries) {
       return { ...row, valid: false, error: "Model name is missing" };
     }
-    const model = db.models.find(
+    const model = selectedModel ?? db.models.find(
       (entry) => entry.name.toLowerCase() === modelName.toLowerCase(),
     );
-    if (!model) {
+    if (!model && !selectedSeries) {
       return { ...row, valid: false, error: "Unknown product model" };
     }
     if (productType !== "inverter" && productType !== "battery" && productType !== "combo") {
@@ -388,6 +484,8 @@ async function parseBulkImportContent(
 
   return {
     fileName,
+    ...(seriesId ? { seriesId } : {}),
+    ...(modelId ? { modelId } : {}),
     rows,
     validCount: rows.filter((row) => row.valid).length,
     invalidCount: rows.filter((row) => !row.valid).length,
@@ -398,11 +496,15 @@ export async function previewBulkImport(input: {
   fileName: string;
   content: string;
   encoding?: "text" | "base64";
+  seriesId?: string;
+  modelId?: string;
 }): Promise<BulkImportPreview> {
   return parseBulkImportContent(
     input.fileName,
     input.content,
     input.encoding === "base64" ? "base64" : "text",
+    input.seriesId,
+    input.modelId,
   );
 }
 
@@ -410,6 +512,7 @@ export async function bulkImportSerials(
   preview: BulkImportPreview,
 ): Promise<BulkImportResult> {
   const db = getDatabase();
+  const series = preview.seriesId ? getSeriesOrThrow(preview.seriesId) : undefined;
   const errors: BulkImportResult["errors"] = [];
   const created: SerialNumber[] = [];
 
@@ -423,10 +526,12 @@ export async function bulkImportSerials(
       return;
     }
 
-    const model = db.models.find(
+    const model = (preview.modelId
+      ? db.models.find((entry) => entry.id === preview.modelId)
+      : undefined) ?? db.models.find(
       (entry) => entry.name.toLowerCase() === row.modelName.toLowerCase(),
     );
-    if (!model) {
+    if (!model && !series) {
       errors.push({
         rowNumber: row.rowNumber,
         serial: row.serial,
@@ -435,20 +540,38 @@ export async function bulkImportSerials(
       return;
     }
 
-    created.push({
+    const createdSerial: SerialNumber = {
       id: createId("srl"),
       serial: row.serial,
-      modelId: model.id,
-      modelName: model.name,
-      capacityKw: model.capacityKw,
-      productType: model.productType,
+      modelId: model?.id ?? "",
+      modelName: model?.name ?? "",
+      capacityKw: model?.capacityKw ?? 0,
+      productType: model?.productType ?? "inverter",
       status: "available",
       addedAt: new Date().toISOString(),
-    });
+    };
+    if (series) createdSerial.seriesId = series.id;
+    created.push(createdSerial);
   });
 
-  if (created.length > 0) {
-    mutate((store) => store.serials.unshift(...created));
+  if (created.length > 0 || series) {
+    mutate((store) => {
+      const importFileId = series ? createId("imp") : undefined;
+      if (importFileId) {
+        created.forEach((serial) => {
+          serial.importFileId = importFileId;
+        });
+        store.serialImportFiles.unshift({
+          id: importFileId,
+          seriesId: series!.id,
+          fileName: preview.fileName,
+          uploadedAt: new Date().toISOString(),
+          serialCount: preview.rows.length,
+          importedCount: created.length,
+        });
+      }
+      store.serials.unshift(...created);
+    });
   }
 
   return { imported: created.length, failed: errors.length, errors };

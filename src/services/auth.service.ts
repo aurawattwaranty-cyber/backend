@@ -45,6 +45,8 @@ function toAdminUser(account: AdminAccount): AdminUser {
     name: account.name,
     email: account.email,
     role: account.role,
+    active: account.active,
+    createdAt: account.createdAt,
   };
 }
 
@@ -358,10 +360,7 @@ function assertPasswordStrength(password: string): void {
 export async function createUser(input: CreateUserInput): Promise<AdminUser> {
   const name = String(input.name ?? "").trim();
   const email = String(input.email ?? "").trim().toLowerCase();
-  const role: AdminRole =
-    input.role === "verifier" || input.role === "superadmin"
-      ? input.role
-      : "admin";
+  const role: AdminRole = "admin";
 
   if (!name) {
     throw new AppError("Enter a name for this account.", 400, "invalid_input");
@@ -384,7 +383,8 @@ export async function createUser(input: CreateUserInput): Promise<AdminUser> {
     email,
     role,
     passwordHash: await hashPassword(input.password),
-    active: true,
+    // New accounts must be explicitly authorized by an existing admin.
+    active: false,
     createdAt: new Date().toISOString(),
   };
 
@@ -392,11 +392,18 @@ export async function createUser(input: CreateUserInput): Promise<AdminUser> {
   return toAdminUser(account);
 }
 
-export function setUserActive(userId: string, active: boolean): AdminUser {
+export function setUserActive(
+  userId: string,
+  active: boolean,
+  actorId?: string,
+): AdminUser {
   const db = getDatabase();
   const account = db.users.find((entry) => entry.id === userId);
   if (!account) {
     throw new AppError("That account no longer exists.", 404, "not_found");
+  }
+  if (actorId && account.id === actorId && !active) {
+    throw new AppError("You cannot deactivate your own account.", 400, "self_deactivation");
   }
 
   // Refuse to strand the system without a way back in.

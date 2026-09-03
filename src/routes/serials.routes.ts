@@ -68,6 +68,8 @@ serialsRouter.post(
       fileName: String(req.body?.fileName ?? "serials.csv"),
       content: String(req.body?.content ?? ""),
       encoding: req.body?.encoding === "base64" ? "base64" : "text",
+      ...(req.body?.seriesId ? { seriesId: String(req.body.seriesId) } : {}),
+      ...(req.body?.modelId ? { modelId: String(req.body.modelId) } : {}),
     });
     res.json(preview);
   }),

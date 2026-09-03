@@ -6,6 +6,8 @@ import ExcelJS from "exceljs";
 // back to the local JSON file, so these tests never touch a real database.
 // Every case below is preview-only and writes nothing.
 import { initializeStore } from "../data/store.js";
+import { createProductModel } from "./products.service.js";
+import { createSerial } from "./serials.service.js";
 import { previewBulkImport } from "./serials.service.js";
 
 const HEADER = ["serial_number", "model_name", "capacity_kw", "product_type"];
@@ -13,7 +15,7 @@ const HEADER = ["serial_number", "model_name", "capacity_kw", "product_type"];
 const ROWS = [
   ["AW-HI-5KW-91001", "AuraWatt HybridPro 5kW", "5", "inverter"],
   ["AW-BT-51-91002", "AuraWatt PowerCell 5.1kWh", "5.1", "battery"],
-  ["AW-HI-3KW-24001", "AuraWatt HybridPro 3kW", "3", "inverter"], // seeded already
+  ["AW-HI-5KW-91001", "AuraWatt HybridPro 5kW", "5", "inverter"],
 ];
 
 function toCsv(rows: string[][]): string {
@@ -32,6 +34,18 @@ async function toXlsxBase64(rows: string[][]): Promise<string> {
 describe("bulk serial import", () => {
   before(async () => {
     await initializeStore();
+    const model = await createProductModel({
+      series: "AuraWatt HybridPro",
+      name: "AuraWatt HybridPro 3kW",
+      capacityKw: 3,
+      productType: "inverter",
+      warrantyMonths: 60,
+      active: true,
+    });
+    await createSerial({
+      serial: "AW-HI-3KW-24001",
+      modelId: model.id,
+    });
   });
 
   test("reads a CSV upload", async () => {
@@ -73,7 +87,9 @@ describe("bulk serial import", () => {
   test("flags a serial that is already in the inventory", async () => {
     const preview = await previewBulkImport({
       fileName: "serials.xlsx",
-      content: await toXlsxBase64([ROWS[2]!]),
+      content: await toXlsxBase64([
+        ["AW-HI-3KW-24001", "AuraWatt HybridPro 3kW", "3", "inverter"],
+      ]),
       encoding: "base64",
     });
     assert.equal(preview.rows[0]?.valid, false);

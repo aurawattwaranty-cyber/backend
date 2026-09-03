@@ -14,7 +14,6 @@ import type {
 import { calculateWarrantyPeriod, isExpired, toIsoDate } from "../utils/dates.js";
 import { AppError } from "../utils/errors.js";
 import { paginate } from "../utils/pagination.js";
-import { buildSerialRecord } from "./serial-mapping.js";
 import { requiredText, validateEmail, validateInstallationDate, validatePhone, validatePincode } from "../utils/validation.js";
 
 function safeText(value: unknown): string {
@@ -80,8 +79,6 @@ function findRegistration(id: string): WarrantyRegistration {
 
 function validateRegistrationDraft(draft: RegistrationDraft): void {
   const serial = requiredText(draft.serial);
-  const modelId = requiredText(draft.modelId);
-  const modelName = requiredText(draft.modelName);
   const customer = draft.customer ?? ({} as RegistrationDraft["customer"]);
   const installer = draft.installer ?? ({} as RegistrationDraft["installer"]);
   const installation = draft.installation ?? ({} as RegistrationDraft["installation"]);
@@ -89,12 +86,6 @@ function validateRegistrationDraft(draft: RegistrationDraft): void {
 
   if (!serial) {
     throw new AppError("Enter a serial number.", 400, "invalid_input");
-  }
-  if (!modelId) {
-    throw new AppError("Choose a product model.", 400, "invalid_input");
-  }
-  if (!modelName) {
-    throw new AppError("Choose a product model.", 400, "invalid_input");
   }
   if (!installation.installationDate || !validateInstallationDate(installation.installationDate)) {
     throw new AppError(
@@ -129,13 +120,15 @@ export async function createWarrantyRegistration(
   validateRegistrationDraft(draft);
   const db = getDatabase();
   const serial = requiredText(draft.serial);
-  const modelId = requiredText(draft.modelId);
   const customer = draft.customer;
   const installer = draft.installer;
   const installation = draft.installation;
   const photos = Array.isArray(draft.photos) ? draft.photos : [];
 
   const serialRecord = db.serials.find((entry) => entry.serial === serial);
+  if (!serialRecord) {
+    throw new AppError("This serial number is not present in the inventory.", 400, "unknown_serial");
+  }
   if (serialRecord?.status === "registered") {
     throw new AppError(
       "This serial number was registered by someone else while you were completing the form.",
@@ -143,11 +136,12 @@ export async function createWarrantyRegistration(
       "serial_taken",
     );
   }
-  const model = db.models.find((entry) => entry.id === modelId);
-  if (!model) {
+  const modelId = requiredText(draft.modelId);
+  const model = modelId ? db.models.find((entry) => entry.id === modelId) : undefined;
+  if (modelId && !model) {
     throw new AppError("That product model no longer exists.", 404, "not_found");
   }
-  if (serialRecord && serialRecord.modelId !== modelId) {
+  if (model && serialRecord.modelId && serialRecord.modelId !== model.id) {
     throw new AppError(
       "The serial number does not match the selected product model.",
       400,
@@ -160,18 +154,18 @@ export async function createWarrantyRegistration(
   const registration: WarrantyRegistration = {
     id,
     serial,
-    modelId,
-    modelName: model.name,
-    capacityKw: model.capacityKw,
-    productType: model.productType,
+    modelId: model?.id ?? serialRecord.modelId,
+    modelName: model?.name ?? serialRecord.modelName,
+    capacityKw: model?.capacityKw ?? serialRecord.capacityKw,
+    productType: model?.productType ?? serialRecord.productType,
     customer,
     installer,
     installation: {
       ...installation,
-      productType: model.productType,
-      modelId: model.id,
-      modelName: model.name,
-      capacityKw: model.capacityKw,
+      productType: model?.productType ?? serialRecord.productType,
+      modelId: model?.id ?? serialRecord.modelId,
+      modelName: model?.name ?? serialRecord.modelName,
+      capacityKw: model?.capacityKw ?? serialRecord.capacityKw,
     },
     photos,
     status: "pending",
@@ -188,13 +182,6 @@ export async function createWarrantyRegistration(
     if (storedSerial) {
       storedSerial.status = "registered";
       storedSerial.warrantyId = id;
-    } else {
-      const newSerial = buildSerialRecord(serial, model);
-      store.serials.unshift({
-        ...newSerial,
-        status: "registered",
-        warrantyId: id,
-      });
     }
   });
 
@@ -350,11 +337,10 @@ export async function approveWarranty(
       );
     }
 
-    const modelId = requiredText(input.modelId);
-    const model = db.models.find((entry) => entry.id === modelId);
-    if (!model) {
+    const modelName = requiredText(input.modelName);
+    if (!modelName) {
       throw new AppError(
-        "Select the product model that matches the side label before approving.",
+        "Enter the model number shown on the side label before approving.",
         400,
         "invalid_model",
       );
@@ -373,7 +359,7 @@ export async function approveWarranty(
     }
 
     const start = requiredText(input.startDate) || registration.installation.installationDate;
-    const months = input.durationMonths ?? model.warrantyMonths;
+    const months = input.durationMonths ?? 60;
     const note = requiredText(input.note);
     const period = calculateWarrantyPeriod(start, months);
 
@@ -385,13 +371,14 @@ export async function approveWarranty(
       );
     }
 
-    registration.modelId = model.id;
-    registration.modelName = model.name;
-    registration.capacityKw = model.capacityKw;
-    registration.productType = model.productType;
-    registration.installation.modelId = model.id;
-    registration.installation.modelName = model.name;
-    registration.installation.capacityKw = model.capacityKw;
+    registration.modelId = "";
+    registration.modelName = modelName;
+    registration.capacityKw = serial.capacityKw;
+    registration.productType = serial.productType;
+    registration.installation.modelId = "";
+    registration.installation.modelName = modelName;
+    registration.installation.capacityKw = serial.capacityKw;
+    registration.installation.productType = serial.productType;
 
     registration.status = isExpired(period.end) ? "expired" : "active";
     registration.reviewedAt = new Date().toISOString();
@@ -403,9 +390,11 @@ export async function approveWarranty(
 
     serial.status = "registered";
     serial.warrantyId = registration.id;
+    serial.modelId = "";
+    serial.modelName = modelName;
 
     registration.history.push(
-      makeEvent("verified", "Evidence Verified", "Admin", `Model set to ${model.name}.`),
+      makeEvent("verified", "Evidence Verified", "Admin", `Model set to ${modelName}.`),
       makeEvent("approved", "Registration Approved", "Admin", note),
       makeEvent(
         "activated",
