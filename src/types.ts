@@ -365,6 +365,7 @@ export interface WarrantyQuery {
 
 export interface ApproveWarrantyInput {
   modelName: string;
+  batteryModel?: string;
   startDate?: string;
   durationMonths?: number;
   note?: string;

@@ -372,6 +372,28 @@ export async function approveWarranty(
       );
     }
 
+    const batteryModel = requiredText(input.batteryModel);
+    if (registration.installation.batteryInstalled && !batteryModel) {
+      throw new AppError(
+        "Select the battery model number before approving.",
+        400,
+        "invalid_battery_model",
+      );
+    }
+
+    if (batteryModel) {
+      const battery = db.models.find(
+        (entry) => entry.name === batteryModel && entry.productType === "battery",
+      );
+      if (!battery) {
+        throw new AppError(
+          "That battery model no longer exists.",
+          404,
+          "invalid_battery_model",
+        );
+      }
+    }
+
     const serial = db.serials.find((entry) => entry.serial === registration.serial);
     if (!serial) {
       throw new AppError("The serial number is missing from inventory.", 400, "invalid_serial");
@@ -405,6 +427,12 @@ export async function approveWarranty(
     registration.installation.modelName = modelName;
     registration.installation.capacityKw = serial.capacityKw;
     registration.installation.productType = serial.productType;
+    if (registration.installation.batteryInstalled) {
+      registration.installation.batteryModel = batteryModel;
+    } else {
+      delete registration.installation.batteryModel;
+      delete registration.installation.batterySerial;
+    }
 
     registration.status = isExpired(period.end) ? "expired" : "active";
     registration.reviewedAt = new Date().toISOString();
