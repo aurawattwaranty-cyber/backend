@@ -4,7 +4,12 @@ import { fileURLToPath } from "node:url";
 import { config } from "../config.js";
 import { AppError } from "../utils/errors.js";
 import type { Database } from "../types.js";
-import { createSeedDatabase, DB_VERSION } from "./seed.js";
+import {
+  createBlankDatabase,
+  createSeedDatabase,
+  DB_VERSION,
+  SEED_MODELS,
+} from "./seed.js";
 import { getMongoCollection, isMongoEnabled, type StoredDatabaseDocument } from "./mongo.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -46,7 +51,7 @@ function isDatabaseShape(value: unknown): value is Database {
  */
 function migrate(db: Database): boolean {
   if (db.version < 6) {
-    Object.assign(db, createSeedDatabase());
+    Object.assign(db, createBlankDatabase());
     return true;
   }
 
@@ -57,6 +62,10 @@ function migrate(db: Database): boolean {
   }
   if (!Array.isArray(db.serialImportFiles)) {
     db.serialImportFiles = [];
+    changed = true;
+  }
+  if (db.models.length === 0) {
+    db.models = SEED_MODELS.map((model) => ({ ...model }));
     changed = true;
   }
   db.version = DB_VERSION;
@@ -213,7 +222,7 @@ export function getRevision(): number {
 }
 
 export function resetDatabase(): void {
-  cache = createSeedDatabase();
+  cache = createBlankDatabase();
   revision += 1;
   persistenceDisabled = false;
   schedulePersist(cache);

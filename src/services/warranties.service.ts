@@ -15,6 +15,7 @@ import { calculateWarrantyPeriod, isExpired, toIsoDate } from "../utils/dates.js
 import { AppError } from "../utils/errors.js";
 import { paginate } from "../utils/pagination.js";
 import { requiredText, validateEmail, validateInstallationDate, validatePhone, validatePincode } from "../utils/validation.js";
+import { getCustomerExperience } from "./customer-experience.service.js";
 
 function safeText(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
@@ -77,53 +78,77 @@ function findRegistration(id: string): WarrantyRegistration {
   return registration;
 }
 
-function validateRegistrationDraft(draft: RegistrationDraft): void {
+async function validateRegistrationDraft(draft: RegistrationDraft): Promise<void> {
   const serial = requiredText(draft.serial);
   const customer = draft.customer ?? ({} as RegistrationDraft["customer"]);
   const installer = draft.installer ?? ({} as RegistrationDraft["installer"]);
   const installation = draft.installation ?? ({} as RegistrationDraft["installation"]);
   const photos = Array.isArray(draft.photos) ? draft.photos : [];
+  const experience = await getCustomerExperience();
+  const configuredRequired = (id: string, fallback = true): boolean => {
+    const field = experience.register.fields.find((entry) => entry.id === id);
+    return field ? field.visible && field.required : fallback;
+  };
 
   if (!serial) {
     throw new AppError("Enter a serial number.", 400, "invalid_input");
   }
-  if (!installation.installationDate || !validateInstallationDate(installation.installationDate)) {
+  if (
+    configuredRequired("installation.installationDate") &&
+    (!installation.installationDate || !validateInstallationDate(installation.installationDate))
+  ) {
     throw new AppError(
       "Enter a valid installation date.",
       400,
       "invalid_input",
     );
   }
-  if (!safeText(customer.fullName)) {
+  if (configuredRequired("customer.fullName") && !safeText(customer.fullName)) {
     throw new AppError("Customer name is required.", 400, "invalid_input");
   }
-  if (!validatePhone(requiredText(customer.phone))) {
+  if (configuredRequired("customer.phone") && !validatePhone(requiredText(customer.phone))) {
     throw new AppError("Enter a 10 digit mobile number.", 400, "invalid_input");
   }
-  if (!validateEmail(requiredText(customer.email))) {
+  if (configuredRequired("customer.email") && !validateEmail(requiredText(customer.email))) {
     throw new AppError("Enter a valid customer email address.", 400, "invalid_input");
   }
-  if (!validatePincode(requiredText(customer.pincode))) {
+  if (configuredRequired("customer.pincode") && !validatePincode(requiredText(customer.pincode))) {
     throw new AppError("Enter a valid 6 digit PIN code.", 400, "invalid_input");
   }
-  if (!requiredText(installer.companyName) || !requiredText(installer.contactName)) {
+  if (
+    (configuredRequired("installer.companyName") && !requiredText(installer.companyName)) ||
+    (configuredRequired("installer.contactName") && !requiredText(installer.contactName))
+  ) {
     throw new AppError("Installer details are required.", 400, "invalid_input");
   }
   if (!photos.length) {
     throw new AppError("Upload the installation photos before submitting.", 400, "invalid_input");
+  }
+
+  const customFields = draft.customFields ?? {};
+  for (const field of experience.register.fields) {
+    if (!field.id.startsWith("custom.") || !field.visible) continue;
+    if (field.required && !safeText(customFields[field.id])) {
+      throw new AppError(`${field.label} is required.`, 400, "invalid_input");
+    }
   }
 }
 
 export async function createWarrantyRegistration(
   draft: RegistrationDraft,
 ): Promise<WarrantyRegistration> {
-  validateRegistrationDraft(draft);
+  await validateRegistrationDraft(draft);
   const db = getDatabase();
   const serial = requiredText(draft.serial);
   const customer = draft.customer;
   const installer = draft.installer;
   const installation = draft.installation;
   const photos = Array.isArray(draft.photos) ? draft.photos : [];
+  const customFields = Object.fromEntries(
+    Object.entries(draft.customFields ?? {})
+      .filter(([key, value]) => key.startsWith("custom.") && typeof value === "string")
+      .map(([key, value]) => [key, value.trim()]),
+  );
 
   const serialRecord = db.serials.find((entry) => entry.serial === serial);
   if (!serialRecord) {
@@ -167,6 +192,7 @@ export async function createWarrantyRegistration(
       modelName: model?.name ?? serialRecord.modelName,
       capacityKw: model?.capacityKw ?? serialRecord.capacityKw,
     },
+    ...(Object.keys(customFields).length ? { customFields } : {}),
     photos,
     status: "pending",
     submittedAt: new Date().toISOString(),

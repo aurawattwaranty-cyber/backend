@@ -3,6 +3,7 @@ import {
   defaultCustomerExperience,
   defaultCustomerFields,
   defaultStatusBlocks,
+  createSeedCustomerExperience,
 } from "../data/customer-experience.defaults.js";
 import type {
   CustomerExperienceConfig,
@@ -56,7 +57,14 @@ function optionalText(value: unknown, what: string, max = 240): string {
  */
 function readConfig(): CustomerExperienceConfig {
   const stored = getDatabase().customerExperience;
-  if (!stored) return defaultCustomerExperience();
+  if (
+    !stored ||
+    !stored.register?.heading ||
+    stored.register.sections.length === 0 ||
+    stored.register.fields.length === 0
+  ) {
+    return createSeedCustomerExperience();
+  }
 
   const defaults = defaultCustomerExperience();
   const knownFieldIds = new Set(stored.register.fields.map((field) => field.id));
@@ -96,8 +104,8 @@ export async function getPublicCustomerExperience(): Promise<CustomerExperienceC
     register: {
       ...config.register,
       sections: [...config.register.sections].sort((a, b) => a.order - b.order),
-      fields: config.register.fields
-        .filter((field) => field.visible || field.locked)
+        fields: config.register.fields
+        .filter((field) => field.visible)
         .sort((a, b) => a.order - b.order),
     },
     status: {
@@ -118,15 +126,17 @@ function mergeField(
   return {
     ...current,
     label,
+    inputType:
+      patch.inputType === "textarea" || patch.inputType === "date"
+        ? patch.inputType
+        : current.inputType ?? "text",
     placeholder: optionalText(
       patch.placeholder ?? current.placeholder,
       "Placeholder",
     ),
     hint: optionalText(patch.hint ?? current.hint, "Help text"),
-    // A locked field backs the warranty record itself, so it stays visible and
-    // mandatory no matter what the request asks for.
-    required: current.locked ? true : bool(patch.required, current.required),
-    visible: current.locked ? true : bool(patch.visible, current.visible),
+    required: bool(patch.required, current.required),
+    visible: bool(patch.visible, current.visible),
     order:
       typeof patch.order === "number" && Number.isFinite(patch.order)
         ? patch.order
@@ -174,6 +184,7 @@ export interface CustomerExperienceUpdate {
     subheading?: string;
     sections?: Partial<CustomerSectionConfig>[];
     fields?: Partial<CustomerFieldConfig>[];
+    deletedFieldIds?: string[];
   };
   status?: {
     heading?: string;
@@ -210,6 +221,36 @@ export async function updateCustomerExperience(
       .filter((block) => typeof block.id === "string")
       .map((block) => [block.id as string, block]),
   );
+  const deletedFieldIds = new Set(
+    (update.register?.deletedFieldIds ?? []).filter(
+    (id): id is string => typeof id === "string",
+    ),
+  );
+  const additions = (update.register?.fields ?? [])
+    .filter(
+      (field) =>
+        typeof field.id === "string" &&
+        field.id.startsWith("custom.") &&
+        !current.register.fields.some((entry) => entry.id === field.id),
+    )
+    .map((field, index): CustomerFieldConfig => ({
+      id: field.id!,
+      section: field.section ?? "customer",
+      label: requireLabel(field.label, "Field label"),
+      inputType:
+        field.inputType === "textarea" || field.inputType === "date"
+          ? field.inputType
+          : "text",
+      placeholder: optionalText(field.placeholder ?? "", "Placeholder"),
+      hint: optionalText(field.hint ?? "", "Help text"),
+      required: Boolean(field.required),
+      visible: field.visible !== false,
+      order:
+        typeof field.order === "number" && Number.isFinite(field.order)
+          ? field.order
+          : index + 1,
+      locked: false,
+    }));
 
   const next: CustomerExperienceConfig = {
     register: {
@@ -225,9 +266,15 @@ export async function updateCustomerExperience(
       sections: current.register.sections.map((section) =>
         mergeSection(section, sectionPatches.get(section.id) ?? {}),
       ),
-      fields: current.register.fields.map((field) =>
-        mergeField(field, fieldPatches.get(field.id) ?? {}),
-      ),
+      fields: [
+        ...current.register.fields.map((field) => {
+          const merged = mergeField(field, fieldPatches.get(field.id) ?? {});
+          return deletedFieldIds.has(field.id)
+            ? { ...merged, visible: false, required: false }
+            : merged;
+        }),
+        ...additions,
+      ],
     },
     status: {
       heading: requireLabel(

@@ -122,6 +122,7 @@ export interface WarrantyRegistration {
   customer: CustomerDetails;
   installer: InstallerDetails;
   installation: InstallationDetails;
+  customFields?: Record<string, string>;
   photos: WarrantyPhoto[];
   status: WarrantyStatus;
   submittedAt: string;
@@ -151,6 +152,7 @@ export interface RegistrationDraft {
   customer: CustomerDetails;
   installer: InstallerDetails;
   installation: InstallationDetails;
+  customFields?: Record<string, string>;
   photos: WarrantyPhoto[];
 }
 
@@ -258,6 +260,7 @@ export interface CustomerFieldConfig {
   id: string;
   section: CustomerFieldSection;
   label: string;
+  inputType?: "text" | "textarea" | "date";
   placeholder: string;
   hint: string;
   required: boolean;
