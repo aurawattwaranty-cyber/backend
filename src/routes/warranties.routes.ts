@@ -128,7 +128,11 @@ warrantiesRouter.post(
   requireAuth,
   requireStaff,
   asyncHandler(async (req, res) => {
-    const updated = await approveWarranty(String(req.params.id), req.body ?? {});
+    const updated = await approveWarranty(
+      String(req.params.id),
+      req.body ?? {},
+      req.user?.name ?? "Admin",
+    );
     res.json({ item: updated });
   }),
 );

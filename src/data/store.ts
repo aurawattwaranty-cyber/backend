@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { config } from "../config.js";
+import { config, isProduction } from "../config.js";
 import { AppError } from "../utils/errors.js";
 import type { Database } from "../types.js";
 import {
@@ -64,6 +64,49 @@ function migrate(db: Database): boolean {
     db.serialImportFiles = [];
     changed = true;
   }
+  if (!Array.isArray(db.authSessions)) {
+    db.authSessions = [];
+    changed = true;
+  }
+  // Series created before v8 did not record whether their serials were for an
+  // inverter or a battery. Infer that once so existing inventory remains valid.
+  db.series.forEach((series) => {
+    const modelTypes = new Set(
+      db.models
+        .filter((model) => model.series.trim().toLowerCase() === series.name.trim().toLowerCase())
+        .map((model) => model.productType),
+    );
+    const serialTypes = new Set(
+      db.serials
+        .filter((serial) => serial.seriesId === series.id)
+        .map((serial) => serial.productType),
+    );
+    // The old uploader defaulted every row to inverter. A matching product
+    // catalog series is therefore more trustworthy when it has one clear type.
+    const inferredType = modelTypes.size === 1
+      ? [...modelTypes][0]!
+      : serialTypes.size === 1
+        ? [...serialTypes][0]!
+        : series.productType === "battery" || series.productType === "combo"
+          ? series.productType
+          : "inverter";
+    if (series.productType !== inferredType) {
+      series.productType = inferredType;
+      changed = true;
+    }
+    if (modelTypes.size === 1) {
+      db.serials
+        .filter(
+          (serial) =>
+            serial.seriesId === series.id &&
+            serial.productType !== inferredType,
+        )
+        .forEach((serial) => {
+          serial.productType = inferredType;
+          changed = true;
+        });
+    }
+  });
   if (db.models.length === 0) {
     db.models = SEED_MODELS.map((model) => ({ ...model }));
     changed = true;
@@ -160,12 +203,27 @@ export async function initializeStore(): Promise<void> {
       console.log("Database connected successfully (MongoDB).");
       return;
     } catch (error) {
+      if (isProduction) {
+        throw new AppError(
+          "MongoDB is unavailable. Production requires durable database storage.",
+          503,
+          "database_unavailable",
+        );
+      }
       useMongo = false;
       console.warn(
         "MongoDB was configured but could not be reached. Falling back to the local JSON store.",
         error,
       );
     }
+  }
+
+  if (isProduction) {
+    throw new AppError(
+      "MONGODB_URI must be configured in production so warranty and session data persists.",
+      503,
+      "database_not_configured",
+    );
   }
 
   useMongo = false;

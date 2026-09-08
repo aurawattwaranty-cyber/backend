@@ -7,6 +7,7 @@ import {
   getSerialCounts,
   getSerials,
   previewBulkImport,
+  validateBatterySerial,
   validateSerial,
 } from "../services/serials.service.js";
 
@@ -17,6 +18,17 @@ serialsRouter.post(
   asyncHandler(async (req, res) => {
     const result = await validateSerial(String(req.body?.serial ?? ""));
     res.json(result);
+  }),
+);
+
+serialsRouter.post(
+  "/validate-battery",
+  asyncHandler(async (req, res) => {
+    const serial = validateBatterySerial(
+      String(req.body?.serial ?? ""),
+      String(req.body?.modelId ?? ""),
+    );
+    res.json({ serial });
   }),
 );
 
@@ -32,6 +44,12 @@ serialsRouter.get(
       status:
         req.query.status === "available" || req.query.status === "registered"
           ? req.query.status
+          : "all",
+      productType:
+        req.query.productType === "inverter" ||
+        req.query.productType === "battery" ||
+        req.query.productType === "combo"
+          ? req.query.productType
           : "all",
       page: Number.isFinite(page) ? page : 1,
       pageSize: Number.isFinite(pageSize) ? pageSize : 15,

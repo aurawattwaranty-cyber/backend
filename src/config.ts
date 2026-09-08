@@ -32,6 +32,8 @@ export const config = {
   bootstrapAdminEmail: process.env.ADMIN_EMAIL ?? "admin@aurawatt.in",
   bootstrapAdminPassword: process.env.ADMIN_PASSWORD ?? "",
   bootstrapAdminName: process.env.ADMIN_NAME ?? "Aurawatt Admin",
+  // Destructive test-only operation. It must be explicitly enabled.
+  allowDataReset: process.env.ALLOW_DATA_RESET === "true",
 };
 
 export const isProduction = process.env.NODE_ENV === "production";

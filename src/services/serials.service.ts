@@ -107,7 +107,7 @@ export async function validateSerial(
   if (record.status === "registered") {
     const result: SerialValidationResult = {
       status: "registered",
-      serial: clone(record),
+      serial: withSeriesName(record),
       message: record.warrantyId
         ? `This serial number is already registered under warranty ID ${record.warrantyId}. Use Check Status to view it.`
         : "This serial number has already been registered.",
@@ -120,16 +120,129 @@ export async function validateSerial(
 
   return {
     status: "available",
-    serial: clone(record),
+    serial: withSeriesName(record),
     message: record.modelName
       ? `${record.modelName} verified and available for registration.`
       : "Serial verified and available for registration. The product model will be confirmed during admin review.",
   };
 }
 
+/**
+ * Validates a battery serial used during warranty registration. Unlike the
+ * inverter lookup, a battery serial is never inferred from its format: it
+ * must already have been uploaded to inventory.
+ */
+export function validateBatterySerial(
+  input: string,
+  expectedModelId?: string,
+): SerialNumber {
+  const serial = normaliseSerial(input);
+  if (!serial || !isSerialFormatValid(serial)) {
+    throw new AppError(
+      "Enter a valid battery serial number from the battery label.",
+      400,
+      "invalid_battery_serial",
+    );
+  }
+
+  const db = getDatabase();
+  const expectedModel = expectedModelId
+    ? db.models.find(
+        (entry) =>
+          entry.id === expectedModelId &&
+          entry.productType === "battery" &&
+          entry.active,
+      )
+    : undefined;
+  if (expectedModelId && !expectedModel) {
+    throw new AppError("Select a valid battery model.", 400, "invalid_battery_model");
+  }
+
+  const record = db.serials.find((entry) => entry.serial === serial);
+  if (!record) {
+    throw new AppError(
+      "This battery serial number is not in the uploaded inventory. Check the label or ask an admin to upload it first.",
+      400,
+      "unknown_battery_serial",
+    );
+  }
+  if (record.status === "registered") {
+    throw new AppError(
+      "This battery serial number is already registered to another warranty.",
+      409,
+      "battery_serial_taken",
+    );
+  }
+  const resolvedRecord = withSeriesName(record);
+  if (resolvedRecord.productType !== "battery") {
+    throw new AppError(
+      "This serial number belongs to an inverter, not the selected battery.",
+      400,
+      "battery_serial_type_mismatch",
+    );
+  }
+  if (expectedModel && record.modelId && record.modelId !== expectedModel.id) {
+    throw new AppError(
+      "This battery serial number does not match the selected battery model.",
+      400,
+      "battery_serial_model_mismatch",
+    );
+  }
+
+  return resolvedRecord;
+}
+
+/**
+ * Imports created before product type selection was introduced stored every
+ * serial as an inverter. A direct model or an unambiguous series-to-model
+ * match is more authoritative than that old default.
+ */
+function resolveSerialProductType(
+  serial: SerialNumber,
+  db = getDatabase(),
+): ProductType {
+  const modelType = serial.modelId
+    ? db.models.find((model) => model.id === serial.modelId)?.productType
+    : undefined;
+  if (modelType) return modelType;
+
+  const seriesName = serial.seriesId
+    ? db.series.find((series) => series.id === serial.seriesId)?.name
+    : undefined;
+  if (seriesName) {
+    const types = new Set(
+      db.models
+        .filter(
+          (model) =>
+            model.series.trim().toLowerCase() === seriesName.trim().toLowerCase(),
+        )
+        .map((model) => model.productType),
+    );
+    if (types.size === 1) return [...types][0]!;
+  }
+
+  return serial.productType;
+}
+
+/** Resolves the human-readable series and effective product type for a serial. */
+function withSeriesName(serial: SerialNumber): SerialNumber {
+  const copy = clone(serial);
+  const db = getDatabase();
+  const seriesName = copy.seriesId
+    ? db.series.find((entry) => entry.id === copy.seriesId)?.name
+    : undefined;
+  const productType = resolveSerialProductType(copy, db);
+  return {
+    ...copy,
+    ...(seriesName ? { seriesName } : {}),
+    productType,
+  };
+}
+
 export interface SerialQuery {
   search?: string;
   status?: SerialStatus | "all";
+  productType?: ProductType | "all";
   page?: number;
   pageSize?: number;
 }
@@ -137,12 +250,24 @@ export interface SerialQuery {
 export async function getSerials(
   query: SerialQuery = {},
 ): Promise<Paginated<SerialNumber>> {
-  const { search = "", status = "all", page = 1, pageSize = 15 } = query;
+  const {
+    search = "",
+    status = "all",
+    productType = "all",
+    page = 1,
+    pageSize = 15,
+  } = query;
   const term = search.trim().toLowerCase();
 
   const filtered = getDatabase()
     .serials.filter((serial) => {
       if (status !== "all" && serial.status !== status) return false;
+      if (
+        productType !== "all" &&
+        resolveSerialProductType(serial) !== productType
+      ) {
+        return false;
+      }
       if (!term) return true;
       return (
         serial.serial.toLowerCase().includes(term) ||
@@ -151,16 +276,8 @@ export async function getSerials(
     })
     .sort((a, b) => b.addedAt.localeCompare(a.addedAt));
 
-  const seriesNames = new Map(
-    getDatabase().series.map((entry) => [entry.id, entry.name]),
-  );
   return paginate(
-    clone(filtered).map((serial) => {
-      const seriesName = serial.seriesId
-        ? seriesNames.get(serial.seriesId)
-        : undefined;
-      return seriesName ? { ...serial, seriesName } : serial;
-    }),
+    filtered.map((serial) => withSeriesName(serial)),
     page,
     pageSize,
   );
@@ -396,6 +513,9 @@ async function parseBulkImportContent(
   if (selectedSeries && selectedModel && selectedModel.series.toLowerCase() !== selectedSeries.name.toLowerCase()) {
     throw new AppError("The selected model does not belong to this series.", 400, "model_series_mismatch");
   }
+  if (selectedSeries && selectedModel && selectedModel.productType !== selectedSeries.productType) {
+    throw new AppError("The selected model does not match this series product type.", 400, "model_type_mismatch");
+  }
 
   let header = (grid[0] ?? []).map((cell) =>
     cell.toLowerCase().replace(/[\s-]+/g, "_"),
@@ -429,7 +549,7 @@ async function parseBulkImportContent(
     const modelName = selectedModel?.name ?? ((modelAt >= 0 ? cells[modelAt] : "")?.trim() ?? "");
     const capacityKw = (capacityAt >= 0 ? cells[capacityAt] : "")?.trim() ?? "";
     const productType = (
-      (typeAt >= 0 ? cells[typeAt] : "")?.trim() || "inverter"
+      (typeAt >= 0 ? cells[typeAt] : "")?.trim() || selectedSeries?.productType || "inverter"
     ).toLowerCase();
 
     const row: BulkImportRow = {
@@ -468,6 +588,13 @@ async function parseBulkImportContent(
         ...row,
         valid: false,
         error: "Product type must be inverter, battery or combo",
+      };
+    }
+    if (selectedSeries && productType !== selectedSeries.productType) {
+      return {
+        ...row,
+        valid: false,
+        error: `Product type must be ${selectedSeries.productType} for this series`,
       };
     }
 
@@ -546,7 +673,7 @@ export async function bulkImportSerials(
       modelId: model?.id ?? "",
       modelName: model?.name ?? "",
       capacityKw: model?.capacityKw ?? 0,
-      productType: model?.productType ?? "inverter",
+      productType: model?.productType ?? series?.productType ?? "inverter",
       status: "available",
       addedAt: new Date().toISOString(),
     };

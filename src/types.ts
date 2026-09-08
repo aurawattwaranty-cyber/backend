@@ -33,6 +33,8 @@ export interface SerialNumber {
 export interface ProductSeries {
   id: string;
   name: string;
+  /** Every serial uploaded to this group belongs to this product type. */
+  productType: ProductType;
   active: boolean;
   createdAt: string;
 }
@@ -81,6 +83,9 @@ export interface InstallationDetails {
   batteryInstalled: boolean;
   batteryModel?: string;
   batterySerial?: string;
+  /** Series resolved from the submitted battery serial for admin model selection. */
+  batterySeriesId?: string;
+  batterySeriesName?: string;
 }
 
 export interface WarrantyPhoto {
@@ -115,6 +120,9 @@ export interface WarrantyEvent {
 export interface WarrantyRegistration {
   id: string;
   serial: string;
+  /** Series assigned to the serial when it was imported. */
+  seriesId?: string;
+  seriesName?: string;
   modelId: string;
   modelName: string;
   capacityKw: number;
@@ -315,6 +323,8 @@ export interface Database {
   registrations: WarrantyRegistration[];
   photoRequirements: PhotoRequirement[];
   users: AdminAccount[];
+  /** Disk-backed fallback sessions used only when MongoDB is not configured. */
+  authSessions: AuthenticatedSession[];
   customerExperience: CustomerExperienceConfig;
   nextWarrantyId: number;
 }

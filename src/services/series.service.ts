@@ -1,5 +1,5 @@
 import { clone, createId, getDatabase, mutate } from "../data/store.js";
-import type { ProductSeries, SerialImportFile } from "../types.js";
+import type { ProductSeries, ProductType, SerialImportFile } from "../types.js";
 import { AppError } from "../utils/errors.js";
 import { requiredText } from "../utils/validation.js";
 
@@ -11,15 +11,20 @@ export async function getSeries(): Promise<{
   return { series: clone(db.series), files: clone(db.serialImportFiles) };
 }
 
-export async function createSeries(input: { name: string }): Promise<ProductSeries> {
+export async function createSeries(input: { name: string; productType?: ProductType }): Promise<ProductSeries> {
   const name = requiredText(input.name);
   if (!name) throw new AppError("Enter a series name.", 400, "invalid_input");
+  const productType = input.productType;
+  if (productType !== "inverter" && productType !== "battery" && productType !== "combo") {
+    throw new AppError("Select whether these are inverter, battery or all-in-one serials.", 400, "invalid_product_type");
+  }
   if (getDatabase().series.some((entry) => entry.name.toLowerCase() === name.toLowerCase())) {
     throw new AppError(`The series "${name}" already exists.`, 409, "duplicate_series");
   }
   const record: ProductSeries = {
     id: createId("ser"),
     name,
+    productType,
     active: true,
     createdAt: new Date().toISOString(),
   };

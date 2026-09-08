@@ -9,7 +9,7 @@ import {
   createSeedCustomerExperience,
 } from "./customer-experience.defaults.js";
 
-export const DB_VERSION = 7;
+export const DB_VERSION = 10;
 
 export const SEED_PHOTO_REQUIREMENTS: PhotoRequirement[] = [
   {
@@ -93,6 +93,7 @@ export function createSeedDatabase(): Database {
     registrations: [],
     photoRequirements: [...SEED_PHOTO_REQUIREMENTS],
     users: [],
+    authSessions: [],
     customerExperience: createSeedCustomerExperience(),
     nextWarrantyId: 1,
   };
@@ -108,6 +109,7 @@ export function createBlankDatabase(): Database {
     registrations: [],
     photoRequirements: [],
     users: [],
+    authSessions: [],
     customerExperience: createEmptyCustomerExperience(),
     nextWarrantyId: 1,
   };

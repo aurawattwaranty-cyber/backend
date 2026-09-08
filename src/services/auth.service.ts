@@ -160,8 +160,17 @@ async function getSessionCollection() {
 }
 
 async function persistSession(session: AuthenticatedSession): Promise<void> {
-  if (!useMongoSessions) return;
   const snapshot = clone(session);
+  if (!useMongoSessions) {
+    mutate((db) => {
+      db.authSessions = db.authSessions.filter(
+        (entry) => entry.token !== snapshot.token,
+      );
+      db.authSessions.push(snapshot);
+    });
+    return;
+  }
+
   sessionPersistQueue = sessionPersistQueue
     .then(async () => {
       const collection = await getSessionCollection();
@@ -178,7 +187,13 @@ async function persistSession(session: AuthenticatedSession): Promise<void> {
 }
 
 async function removeSession(token: string): Promise<void> {
-  if (!useMongoSessions) return;
+  if (!useMongoSessions) {
+    mutate((db) => {
+      db.authSessions = db.authSessions.filter((entry) => entry.token !== token);
+    });
+    return;
+  }
+
   sessionPersistQueue = sessionPersistQueue
     .then(async () => {
       const collection = await getSessionCollection();
@@ -195,7 +210,17 @@ export async function initializeAuthSessions(): Promise<void> {
   sessions.clear();
   sessionsInitialized = true;
 
-  if (!useMongoSessions) return;
+  if (!useMongoSessions) {
+    const savedSessions = getDatabase().authSessions;
+    const activeSessions = savedSessions.filter((session) => !sessionExpired(session));
+    activeSessions.forEach((session) => sessions.set(session.token, clone(session)));
+    if (activeSessions.length !== savedSessions.length) {
+      mutate((db) => {
+        db.authSessions = activeSessions;
+      });
+    }
+    return;
+  }
 
   const collection = await getSessionCollection();
   const now = new Date().toISOString();

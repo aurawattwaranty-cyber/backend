@@ -16,6 +16,7 @@ import { AppError } from "../utils/errors.js";
 import { paginate } from "../utils/pagination.js";
 import { requiredText, validateEmail, validateInstallationDate, validatePhone, validatePincode } from "../utils/validation.js";
 import { getCustomerExperience } from "./customer-experience.service.js";
+import { validateBatterySerial } from "./serials.service.js";
 
 function safeText(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
@@ -76,6 +77,35 @@ function findRegistration(id: string): WarrantyRegistration {
     );
   }
   return registration;
+}
+
+/** Supplies series data for registrations created before it was persisted. */
+function withResolvedSeries(registration: WarrantyRegistration): WarrantyRegistration {
+  const copy = clone(registration);
+  const serial = getDatabase().serials.find((entry) => entry.serial === copy.serial);
+  const seriesId = copy.seriesId ?? serial?.seriesId;
+  const seriesName = seriesId
+    ? getDatabase().series.find((entry) => entry.id === seriesId)?.name
+    : copy.seriesName;
+  const batterySerial = copy.installation.batterySerial
+    ? getDatabase().serials.find(
+        (entry) => entry.serial === copy.installation.batterySerial,
+      )
+    : undefined;
+  const batterySeriesId = copy.installation.batterySeriesId ?? batterySerial?.seriesId;
+  const batterySeriesName = batterySeriesId
+    ? getDatabase().series.find((entry) => entry.id === batterySeriesId)?.name
+    : copy.installation.batterySeriesName;
+  return {
+    ...copy,
+    ...(seriesId ? { seriesId } : {}),
+    ...(seriesName ? { seriesName } : {}),
+    installation: {
+      ...copy.installation,
+      ...(batterySeriesId ? { batterySeriesId } : {}),
+      ...(batterySeriesName ? { batterySeriesName } : {}),
+    },
+  };
 }
 
 async function validateRegistrationDraft(draft: RegistrationDraft): Promise<void> {
@@ -143,6 +173,11 @@ export async function createWarrantyRegistration(
   const customer = draft.customer;
   const installer = draft.installer;
   const installation = draft.installation;
+  const submittedInstallation = { ...installation };
+  // Battery model selection belongs to the reviewer, never to the customer.
+  delete submittedInstallation.batteryModel;
+  delete submittedInstallation.batterySeriesId;
+  delete submittedInstallation.batterySeriesName;
   const photos = Array.isArray(draft.photos) ? draft.photos : [];
   const customFields = Object.fromEntries(
     Object.entries(draft.customFields ?? {})
@@ -161,6 +196,11 @@ export async function createWarrantyRegistration(
       "serial_taken",
     );
   }
+
+  const batterySerialRecord = installation.batteryInstalled
+    ? validateBatterySerial(installation.batterySerial ?? "")
+    : undefined;
+
   const modelId = requiredText(draft.modelId);
   const model = modelId ? db.models.find((entry) => entry.id === modelId) : undefined;
   if (modelId && !model) {
@@ -176,9 +216,17 @@ export async function createWarrantyRegistration(
 
   const registrationYear = new Date().getFullYear();
   const id = `AWR-WC-${registrationYear}-${String(db.nextWarrantyId).padStart(6, "0")}`;
+  const seriesName = serialRecord.seriesId
+    ? db.series.find((entry) => entry.id === serialRecord.seriesId)?.name
+    : undefined;
+  const batterySeriesName = batterySerialRecord?.seriesId
+    ? db.series.find((entry) => entry.id === batterySerialRecord.seriesId)?.name
+    : undefined;
   const registration: WarrantyRegistration = {
     id,
     serial,
+    ...(serialRecord.seriesId ? { seriesId: serialRecord.seriesId } : {}),
+    ...(seriesName ? { seriesName } : {}),
     modelId: model?.id ?? serialRecord.modelId,
     modelName: model?.name ?? serialRecord.modelName,
     capacityKw: model?.capacityKw ?? serialRecord.capacityKw,
@@ -186,7 +234,12 @@ export async function createWarrantyRegistration(
     customer,
     installer,
     installation: {
-      ...installation,
+      ...submittedInstallation,
+      ...(batterySerialRecord ? { batterySerial: batterySerialRecord.serial } : {}),
+      ...(batterySerialRecord?.seriesId
+        ? { batterySeriesId: batterySerialRecord.seriesId }
+        : {}),
+      ...(batterySeriesName ? { batterySeriesName } : {}),
       productType: model?.productType ?? serialRecord.productType,
       modelId: model?.id ?? serialRecord.modelId,
       modelName: model?.name ?? serialRecord.modelName,
@@ -209,6 +262,15 @@ export async function createWarrantyRegistration(
       storedSerial.status = "registered";
       storedSerial.warrantyId = id;
     }
+    if (batterySerialRecord) {
+      const storedBatterySerial = store.serials.find(
+        (entry) => entry.serial === batterySerialRecord.serial,
+      );
+      if (storedBatterySerial) {
+        storedBatterySerial.status = "registered";
+        storedBatterySerial.warrantyId = id;
+      }
+    }
   });
 
   return clone(registration);
@@ -222,7 +284,7 @@ export async function getWarrantyStatus(
     throw new AppError("Enter a warranty ID to continue.", 400, "empty_id");
   }
   ensureExpiredSync();
-  return clone(findRegistration(id));
+  return withResolvedSeries(findRegistration(id));
 }
 
 export async function resubmitWarranty(
@@ -314,12 +376,12 @@ export async function getWarrantyRegistrations(
       return sortDir === "asc" ? order : -order;
     });
 
-  return paginate(clone(filtered), page, pageSize);
+  return paginate(filtered.map(withResolvedSeries), page, pageSize);
 }
 
 export async function getWarrantyById(id: string): Promise<WarrantyRegistration> {
   ensureExpiredSync();
-  return clone(findRegistration(id));
+  return withResolvedSeries(findRegistration(id));
 }
 
 export async function getDashboardStats(): Promise<DashboardStats> {
@@ -349,6 +411,7 @@ export async function getRecentRegistrations(
 export async function approveWarranty(
   id: string,
   input: ApproveWarrantyInput,
+  actor = "Admin",
 ): Promise<WarrantyRegistration> {
   const updated = mutate((db) => {
     const registration = db.registrations.find((entry) => entry.id === id);
@@ -369,6 +432,38 @@ export async function approveWarranty(
         "Enter the model number shown on the side label before approving.",
         400,
         "invalid_model",
+      );
+    }
+
+    const selectedModel = db.models.find(
+      (entry) =>
+        entry.name.toLowerCase() === modelName.toLowerCase() &&
+        entry.productType === registration.productType &&
+        entry.active,
+    );
+    if (!selectedModel) {
+      throw new AppError(
+        "Select a valid product model before approving.",
+        400,
+        "invalid_model",
+      );
+    }
+
+    const serialForSeries = db.serials.find(
+      (entry) => entry.serial === registration.serial,
+    );
+    const seriesId = registration.seriesId ?? serialForSeries?.seriesId;
+    const seriesName = seriesId
+      ? db.series.find((entry) => entry.id === seriesId)?.name
+      : registration.seriesName;
+    if (
+      seriesName &&
+      selectedModel.series.trim().toLowerCase() !== seriesName.trim().toLowerCase()
+    ) {
+      throw new AppError(
+        "The selected model does not belong to this serial's series.",
+        400,
+        "model_series_mismatch",
       );
     }
 
@@ -406,6 +501,9 @@ export async function approveWarranty(
       );
     }
 
+    if (seriesId) registration.seriesId = seriesId;
+    if (seriesName) registration.seriesName = seriesName;
+
     const start = requiredText(input.startDate) || registration.installation.installationDate;
     const months = input.durationMonths ?? 60;
     const note = requiredText(input.note);
@@ -419,14 +517,14 @@ export async function approveWarranty(
       );
     }
 
-    registration.modelId = "";
-    registration.modelName = modelName;
-    registration.capacityKw = serial.capacityKw;
-    registration.productType = serial.productType;
-    registration.installation.modelId = "";
-    registration.installation.modelName = modelName;
-    registration.installation.capacityKw = serial.capacityKw;
-    registration.installation.productType = serial.productType;
+    registration.modelId = selectedModel.id;
+    registration.modelName = selectedModel.name;
+    registration.capacityKw = selectedModel.capacityKw;
+    registration.productType = selectedModel.productType;
+    registration.installation.modelId = selectedModel.id;
+    registration.installation.modelName = selectedModel.name;
+    registration.installation.capacityKw = selectedModel.capacityKw;
+    registration.installation.productType = selectedModel.productType;
     if (registration.installation.batteryInstalled) {
       registration.installation.batteryModel = batteryModel;
     } else {
@@ -444,12 +542,12 @@ export async function approveWarranty(
 
     serial.status = "registered";
     serial.warrantyId = registration.id;
-    serial.modelId = "";
-    serial.modelName = modelName;
+    serial.modelId = selectedModel.id;
+    serial.modelName = selectedModel.name;
 
     registration.history.push(
-      makeEvent("verified", "Evidence Verified", "Admin", `Model set to ${modelName}.`),
-      makeEvent("approved", "Registration Approved", "Admin", note),
+      makeEvent("verified", "Evidence Verified", actor, `Model set to ${selectedModel.name}.`),
+      makeEvent("approved", "Registration Approved", actor, note),
       makeEvent(
         "activated",
         "Warranty Activated",
@@ -527,11 +625,16 @@ export async function rejectWarranty(
       makeEvent("rejected", "Registration Rejected", "Admin", message),
     );
 
-    const serial = db.serials.find((entry) => entry.serial === registration.serial);
-    if (serial) {
+    const serialsToRelease = [
+      registration.serial,
+      registration.installation.batterySerial,
+    ].filter((serial): serial is string => Boolean(serial));
+    db.serials.forEach((serial) => {
+      if (!serialsToRelease.includes(serial.serial)) return;
+      if (serial.warrantyId !== registration.id) return;
       serial.status = "available";
       delete serial.warrantyId;
-    }
+    });
 
     return registration;
   });
