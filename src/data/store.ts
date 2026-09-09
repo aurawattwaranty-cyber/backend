@@ -9,6 +9,7 @@ import {
   createSeedDatabase,
   DB_VERSION,
   SEED_MODELS,
+  SEED_PHOTO_REQUIREMENTS,
 } from "./seed.js";
 import { getMongoCollection, isMongoEnabled, type StoredDatabaseDocument } from "./mongo.js";
 
@@ -105,6 +106,14 @@ function migrate(db: Database): boolean {
   });
   if (db.models.length === 0) {
     db.models = SEED_MODELS.map((model) => ({ ...model }));
+    changed = true;
+  }
+  // The photos step is mandatory — a registration cannot be submitted without
+  // photos — so an empty checklist leaves the customer with nothing to upload
+  // and the super admin with nothing to edit on Customer Fields. Restore the
+  // standard three as real, editable rows so both sides read the same list.
+  if (db.photoRequirements.length === 0) {
+    db.photoRequirements = SEED_PHOTO_REQUIREMENTS.map((entry) => ({ ...entry }));
     changed = true;
   }
   db.version = DB_VERSION;

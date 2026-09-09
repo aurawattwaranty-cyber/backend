@@ -96,7 +96,16 @@ export async function getCustomerExperience(): Promise<CustomerExperienceConfig>
   return clone(readConfig());
 }
 
-/** Only the visible slice, ordered — what the public pages actually render. */
+/**
+ * The ordered config the public pages render from.
+ *
+ * Hidden entries are kept in the payload with `visible: false` rather than
+ * filtered out. The public pages ship their own hardcoded copy for every
+ * built-in field and fall back to it whenever an id is missing from the
+ * config — that fallback exists for the moment before this request lands, so
+ * dropping a hidden field here would read as "not configured" and render the
+ * field the super admin just hid. Same for status blocks.
+ */
 export async function getPublicCustomerExperience(): Promise<CustomerExperienceConfig> {
   const config = clone(readConfig());
   return {
@@ -104,15 +113,11 @@ export async function getPublicCustomerExperience(): Promise<CustomerExperienceC
     register: {
       ...config.register,
       sections: [...config.register.sections].sort((a, b) => a.order - b.order),
-        fields: config.register.fields
-        .filter((field) => field.visible)
-        .sort((a, b) => a.order - b.order),
+      fields: [...config.register.fields].sort((a, b) => a.order - b.order),
     },
     status: {
       ...config.status,
-      blocks: config.status.blocks
-        .filter((block) => block.visible || block.locked)
-        .sort((a, b) => a.order - b.order),
+      blocks: [...config.status.blocks].sort((a, b) => a.order - b.order),
     },
   };
 }
