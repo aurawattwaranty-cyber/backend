@@ -93,7 +93,6 @@ export function createSeedDatabase(): Database {
     registrations: [],
     photoRequirements: [...SEED_PHOTO_REQUIREMENTS],
     users: [],
-    authSessions: [],
     customerExperience: createSeedCustomerExperience(),
     nextWarrantyId: 1,
   };
@@ -109,7 +108,6 @@ export function createBlankDatabase(): Database {
     registrations: [],
     photoRequirements: [],
     users: [],
-    authSessions: [],
     customerExperience: createEmptyCustomerExperience(),
     nextWarrantyId: 1,
   };

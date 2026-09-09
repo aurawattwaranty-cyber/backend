@@ -3,10 +3,10 @@ import { config } from "../config.js";
 import {
   changePassword,
   clearCookieOptions,
+  createCsrfToken,
   createUser,
   listUsers,
   login,
-  logout,
   sessionCookieOptions,
   setUserActive,
 } from "../services/auth.service.js";
@@ -28,8 +28,8 @@ authRouter.post(
     res.cookie(config.cookieName, session.token, sessionCookieOptions(Boolean(remember)));
     res.json({
       user: session.user,
-      token: session.token,
       expiresAt: session.expiresAt,
+      csrfToken: createCsrfToken(session.token),
     });
   }),
 );
@@ -53,7 +53,10 @@ authRouter.get(
   "/session",
   optionalAuth,
   asyncHandler(async (req, res) => {
-    res.json({ user: req.user ?? null });
+    res.json({
+      user: req.user ?? null,
+      csrfToken: req.jwtToken ? createCsrfToken(req.jwtToken) : null,
+    });
   }),
 );
 
@@ -61,7 +64,6 @@ authRouter.post(
   "/logout",
   requireAuth,
   asyncHandler(async (req, res) => {
-    logout(req.sessionToken);
     res.clearCookie(config.cookieName, clearCookieOptions());
     res.json({ ok: true });
   }),

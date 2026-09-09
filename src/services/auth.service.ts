@@ -1,12 +1,10 @@
 import crypto from "node:crypto";
 import { config } from "../config.js";
-import { getMongoDb } from "../data/mongo.js";
-import { clone, createId, getDatabase, isMongoStoreActive, mutate } from "../data/store.js";
+import { createId, getDatabase, mutate } from "../data/store.js";
 import type {
   AdminAccount,
   AdminRole,
   AdminUser,
-  AuthenticatedSession,
   ChangePasswordInput,
   CreateUserInput,
   LoginInput,
@@ -15,11 +13,21 @@ import { AppError } from "../utils/errors.js";
 import { hashPassword, verifyPassword } from "../utils/password.js";
 import { validateEmail } from "../utils/validation.js";
 
-interface StoredSessionDocument extends AuthenticatedSession {
-  _id: string;
+interface JwtPayload {
+  aud: "aurawatt-admin";
+  exp: number;
+  iat: number;
+  iss: "aurawatt-api";
+  role: AdminRole;
+  sub: string;
+  ver: number;
 }
 
-const sessions = new Map<string, AuthenticatedSession>();
+export interface AuthenticatedJwt {
+  token: string;
+  user: AdminUser;
+  expiresAt: string;
+}
 
 /**
  * Hash of a throwaway secret, used to spend the same work on a login for an
@@ -30,12 +38,51 @@ function getDummyHash(): Promise<string> {
   dummyHashPromise ??= hashPassword(crypto.randomBytes(16).toString("hex"));
   return dummyHashPromise;
 }
-let sessionsInitialized = false;
-let useMongoSessions = false;
-let sessionPersistQueue = Promise.resolve();
+function base64Url(value: Buffer | string): string {
+  return Buffer.from(value).toString("base64url");
+}
 
-function createToken(): string {
-  return crypto.randomUUID();
+function sign(value: string): string {
+  return crypto
+    .createHmac("sha256", config.jwtSecret)
+    .update(value)
+    .digest("base64url");
+}
+
+function timingSafeEqual(left: string, right: string): boolean {
+  const leftBuffer = Buffer.from(left);
+  const rightBuffer = Buffer.from(right);
+  return leftBuffer.length === rightBuffer.length && crypto.timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function accountAuthVersion(account: AdminAccount): number {
+  return account.authVersion ?? 0;
+}
+
+function issueJwt(account: AdminAccount, remember: boolean): AuthenticatedJwt {
+  const now = Math.floor(Date.now() / 1000);
+  const ttlSeconds =
+    (remember ? config.jwtRememberTtlDays : config.jwtAccessTtlDays) *
+    24 *
+    60 *
+    60;
+  const payload: JwtPayload = {
+    aud: "aurawatt-admin",
+    exp: now + ttlSeconds,
+    iat: now,
+    iss: "aurawatt-api",
+    role: account.role,
+    sub: account.id,
+    ver: accountAuthVersion(account),
+  };
+  const header = base64Url(JSON.stringify({ alg: "HS256", typ: "JWT" }));
+  const body = base64Url(JSON.stringify(payload));
+  const token = `${header}.${body}.${sign(`${header}.${body}`)}`;
+  return {
+    token,
+    user: toAdminUser(account),
+    expiresAt: new Date(payload.exp * 1000).toISOString(),
+  };
 }
 
 /** Strips the password hash so it can never reach a response body. */
@@ -150,109 +197,75 @@ function ensureSuperAdminExists(): void {
   );
 }
 
-function sessionExpired(session: AuthenticatedSession): boolean {
-  return new Date(session.expiresAt).getTime() < Date.now();
-}
-
-async function getSessionCollection() {
-  const db = await getMongoDb();
-  return db.collection<StoredSessionDocument>("auth_sessions");
-}
-
-async function persistSession(session: AuthenticatedSession): Promise<void> {
-  const snapshot = clone(session);
-  if (!useMongoSessions) {
-    mutate((db) => {
-      db.authSessions = db.authSessions.filter(
-        (entry) => entry.token !== snapshot.token,
-      );
-      db.authSessions.push(snapshot);
-    });
-    return;
+/** Refuse an unsafe deployment before it can issue a production credential. */
+export function assertJwtConfiguration(): void {
+  if (process.env.NODE_ENV === "production" && config.jwtSecret.length < 32) {
+    throw new Error("JWT_SECRET must be set to at least 32 characters in production.");
   }
-
-  sessionPersistQueue = sessionPersistQueue
-    .then(async () => {
-      const collection = await getSessionCollection();
-      await collection.updateOne(
-        { _id: snapshot.token },
-        { $set: snapshot },
-        { upsert: true },
-      );
-    })
-    .catch((error: unknown) => {
-      console.error("Failed to persist auth session:", error);
-    });
-  await sessionPersistQueue;
 }
 
-async function removeSession(token: string): Promise<void> {
-  if (!useMongoSessions) {
-    mutate((db) => {
-      db.authSessions = db.authSessions.filter((entry) => entry.token !== token);
-    });
-    return;
-  }
+/**
+ * Verifies signature and registered claims, then reloads the account so role
+ * and activation changes take effect immediately. `authVersion` revokes all
+ * previously issued tokens after a password or access change.
+ */
+export function getUserFromJwt(token: string): AdminUser | null {
+  const [encodedHeader, encodedPayload, signature, ...extra] = token.split(".");
+  if (!encodedHeader || !encodedPayload || !signature || extra.length > 0) return null;
+  if (!timingSafeEqual(sign(`${encodedHeader}.${encodedPayload}`), signature)) return null;
 
-  sessionPersistQueue = sessionPersistQueue
-    .then(async () => {
-      const collection = await getSessionCollection();
-      await collection.deleteOne({ _id: token });
-    })
-    .catch((error: unknown) => {
-      console.error("Failed to delete auth session:", error);
-    });
-  await sessionPersistQueue;
-}
-
-export async function initializeAuthSessions(): Promise<void> {
-  useMongoSessions = isMongoStoreActive();
-  sessions.clear();
-  sessionsInitialized = true;
-
-  if (!useMongoSessions) {
-    const savedSessions = getDatabase().authSessions;
-    const activeSessions = savedSessions.filter((session) => !sessionExpired(session));
-    activeSessions.forEach((session) => sessions.set(session.token, clone(session)));
-    if (activeSessions.length !== savedSessions.length) {
-      mutate((db) => {
-        db.authSessions = activeSessions;
-      });
+  try {
+    const header = JSON.parse(Buffer.from(encodedHeader, "base64url").toString("utf8")) as {
+      alg?: string;
+      typ?: string;
+    };
+    const payload = JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8")) as Partial<JwtPayload>;
+    const now = Math.floor(Date.now() / 1000);
+    if (
+      header.alg !== "HS256" ||
+      header.typ !== "JWT" ||
+      payload.iss !== "aurawatt-api" ||
+      payload.aud !== "aurawatt-admin" ||
+      typeof payload.sub !== "string"
+    ) {
+      return null;
     }
-    return;
-  }
 
-  const collection = await getSessionCollection();
-  const now = new Date().toISOString();
-  await collection.deleteMany({ expiresAt: { $lt: now } });
-  const activeSessions = await collection.find().toArray();
-  activeSessions.forEach((document) => {
-    if (!sessionExpired(document)) {
-      sessions.set(document.token, {
-        token: document.token,
-        user: document.user,
-        expiresAt: document.expiresAt,
-      });
+    const { exp, iat, sub, ver } = payload;
+    if (
+      typeof exp !== "number" ||
+      !Number.isInteger(exp) ||
+      typeof iat !== "number" ||
+      !Number.isInteger(iat) ||
+      typeof ver !== "number" ||
+      !Number.isInteger(ver) ||
+      typeof sub !== "string" ||
+      exp <= now ||
+      iat > now + 60
+    ) {
+      return null;
     }
-  });
-}
 
-export function getSessionByToken(token: string): AuthenticatedSession | null {
-  if (!sessionsInitialized) return null;
-
-  const session = sessions.get(token);
-  if (!session) return null;
-  if (sessionExpired(session)) {
-    sessions.delete(token);
-    void removeSession(token);
+    const account = getDatabase().users.find((entry) => entry.id === sub);
+    if (!account || !account.active || accountAuthVersion(account) !== ver) return null;
+    return toAdminUser(account);
+  } catch {
     return null;
   }
-  return session;
+}
+
+/** A per-JWT CSRF proof. The JWT stays HttpOnly; this derived value is safe for JS to hold. */
+export function createCsrfToken(jwt: string): string {
+  return crypto.createHmac("sha256", config.jwtSecret).update(`csrf:${jwt}`).digest("base64url");
+}
+
+export function verifyCsrfToken(jwt: string, csrfToken: string | undefined): boolean {
+  return typeof csrfToken === "string" && timingSafeEqual(createCsrfToken(jwt), csrfToken);
 }
 
 export async function login(
   input: LoginInput,
-): Promise<AuthenticatedSession> {
+): Promise<AuthenticatedJwt> {
   const email = input.email.trim().toLowerCase();
   const bootstrapEmail = config.bootstrapAdminEmail.trim().toLowerCase();
   const bootstrapPassword = config.bootstrapAdminPassword.trim();
@@ -326,21 +339,7 @@ export async function login(
     if (stored) stored.lastLoginAt = new Date().toISOString();
   });
 
-  const user = toAdminUser(account);
-  const token = createToken();
-  const expiresAt = new Date(
-    Date.now() + (input.remember ? 30 : 1) * 24 * 60 * 60 * 1000,
-  ).toISOString();
-  const session: AuthenticatedSession = { token, user, expiresAt };
-  sessions.set(token, session);
-  await persistSession(session);
-  return session;
-}
-
-export function logout(token?: string | null): void {
-  if (!token) return;
-  sessions.delete(token);
-  void removeSession(token);
+  return issueJwt({ ...account, lastLoginAt: new Date().toISOString() }, input.remember);
 }
 
 export function sessionCookieOptions(remember: boolean) {
@@ -349,7 +348,12 @@ export function sessionCookieOptions(remember: boolean) {
     httpOnly: true,
     sameSite: crossSiteCookie ? "none" as const : "lax" as const,
     secure: crossSiteCookie,
-    maxAge: (remember ? 30 : 1) * 24 * 60 * 60 * 1000,
+    maxAge:
+      (remember ? config.jwtRememberTtlDays : config.jwtAccessTtlDays) *
+      24 *
+      60 *
+      60 *
+      1000,
     path: "/",
   };
 }
@@ -450,7 +454,11 @@ export function setUserActive(
 
   mutate((store) => {
     const stored = store.users.find((entry) => entry.id === userId);
-    if (stored) stored.active = active;
+    if (stored) {
+      stored.active = active;
+      // Deactivation must take effect for already-issued JWTs too.
+      stored.authVersion = accountAuthVersion(stored) + 1;
+    }
   });
 
   return toAdminUser({ ...account, active });
@@ -482,14 +490,9 @@ export async function changePassword(
 
   mutate((db) => {
     const stored = db.users.find((entry) => entry.id === userId);
-    if (stored) stored.passwordHash = passwordHash;
+    if (stored) {
+      stored.passwordHash = passwordHash;
+      stored.authVersion = accountAuthVersion(stored) + 1;
+    }
   });
-
-  // Every other session for this user is invalidated, the current one included.
-  [...sessions.values()]
-    .filter((session) => session.user.id === userId)
-    .forEach((session) => {
-      sessions.delete(session.token);
-      void removeSession(session.token);
-    });
 }

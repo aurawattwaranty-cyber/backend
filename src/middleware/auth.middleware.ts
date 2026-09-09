@@ -1,6 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
 import { config } from "../config.js";
-import { getSessionByToken } from "../services/auth.service.js";
+import { getUserFromJwt, verifyCsrfToken } from "../services/auth.service.js";
 import { AppError } from "../utils/errors.js";
 
 function extractBearerToken(authorization?: string): string | null {
@@ -9,18 +9,11 @@ function extractBearerToken(authorization?: string): string | null {
   return match?.[1]?.trim() ?? null;
 }
 
-export function resolveSessionToken(req: Request): string | null {
+export function resolveJwt(req: Request): string | null {
   const cookieToken = req.cookies?.[config.cookieName];
   if (typeof cookieToken === "string" && cookieToken.trim()) {
     return cookieToken.trim();
   }
-
-  const headerToken =
-    typeof req.header("x-session-token") === "string"
-      ? req.header("x-session-token")?.trim()
-      : null;
-  if (headerToken) return headerToken;
-
   return extractBearerToken(req.header("authorization") ?? undefined);
 }
 
@@ -29,12 +22,12 @@ export function optionalAuth(
   _res: Response,
   next: NextFunction,
 ): void {
-  const token = resolveSessionToken(req);
+  const token = resolveJwt(req);
   if (token) {
-    req.sessionToken = token;
-    const session = getSessionByToken(token);
-    if (session) {
-      req.user = session.user;
+    const user = getUserFromJwt(token);
+    if (user) {
+      req.jwtToken = token;
+      req.user = user;
     }
   }
   next();
@@ -45,22 +38,31 @@ export function requireAuth(
   _res: Response,
   next: NextFunction,
 ): void {
-  const token = resolveSessionToken(req);
+  const token = resolveJwt(req);
   if (!token) {
     next(new AppError("Please sign in to continue.", 401, "unauthorized"));
     return;
   }
 
-  const session = getSessionByToken(token);
-  if (!session) {
-    next(new AppError("Your session has expired. Please sign in again.", 401, "session_expired"));
+  const user = getUserFromJwt(token);
+  if (!user) {
+    next(new AppError("Your sign-in has expired. Please sign in again.", 401, "session_expired"));
     return;
   }
 
-  req.sessionToken = token;
-  req.user = session.user;
+  if (
+    ["POST", "PUT", "PATCH", "DELETE"].includes(req.method) &&
+    !verifyCsrfToken(token, req.header("x-csrf-token") ?? undefined)
+  ) {
+    next(new AppError("Your security token is missing or invalid. Refresh and try again.", 403, "csrf_invalid"));
+    return;
+  }
+
+  req.jwtToken = token;
+  req.user = user;
   next();
 }
+
 
 export function requireAdmin(
   req: Request,

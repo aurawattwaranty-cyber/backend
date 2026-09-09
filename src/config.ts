@@ -10,6 +10,11 @@ function unique(values: string[]): string[] {
   return [...new Set(values)];
 }
 
+function positiveInteger(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 const corsOrigins = unique([
   ...csv(process.env.CORS_ORIGIN, []),
   ...csv(process.env.SITE_URL, []),
@@ -26,7 +31,19 @@ export const config = {
   cloudinaryApiKey: process.env.CLOUDINARY_API_KEY ?? "",
   cloudinaryApiSecret: process.env.CLOUDINARY_API_SECRET ?? "",
   cloudinaryFolder: process.env.CLOUDINARY_FOLDER ?? "aurawatt",
-  cookieName: process.env.COOKIE_NAME ?? "aw_session",
+  cookieName: process.env.COOKIE_NAME ?? "aw_access",
+  // A random development fallback keeps local setup friction-free. Production
+  // deliberately has no fallback: token signatures must survive restarts and
+  // be controlled by deployment secret management.
+  jwtSecret:
+    process.env.JWT_SECRET ??
+    (process.env.NODE_ENV === "production"
+      ? ""
+      : crypto.randomBytes(48).toString("base64url")),
+  // Seven days avoids unnecessary sign-ins for normal admin work; “remember
+  // me” remains deliberately longer but can be tuned per deployment.
+  jwtAccessTtlDays: positiveInteger(process.env.JWT_ACCESS_TTL_DAYS, 7),
+  jwtRememberTtlDays: positiveInteger(process.env.JWT_REMEMBER_TTL_DAYS, 30),
   // Used once, to create the first admin account when the database has none.
   // Leaving ADMIN_PASSWORD unset generates a random one and prints it on boot.
   bootstrapAdminEmail: process.env.ADMIN_EMAIL ?? "admin@aurawatt.in",
@@ -37,3 +54,4 @@ export const config = {
 };
 
 export const isProduction = process.env.NODE_ENV === "production";
+import crypto from "node:crypto";

@@ -64,10 +64,6 @@ function migrate(db: Database): boolean {
     db.serialImportFiles = [];
     changed = true;
   }
-  if (!Array.isArray(db.authSessions)) {
-    db.authSessions = [];
-    changed = true;
-  }
   // Series created before v8 did not record whether their serials were for an
   // inverter or a battery. Infer that once so existing inventory remains valid.
   db.series.forEach((series) => {

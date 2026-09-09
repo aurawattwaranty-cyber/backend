@@ -193,6 +193,8 @@ export interface AdminUser {
  */
 export interface AdminAccount extends AdminUser {
   passwordHash: string;
+  /** Bumped when credentials or account access changes to revoke old JWTs. */
+  authVersion?: number;
   active: boolean;
   createdAt: string;
   lastLoginAt?: string;
@@ -323,8 +325,6 @@ export interface Database {
   registrations: WarrantyRegistration[];
   photoRequirements: PhotoRequirement[];
   users: AdminAccount[];
-  /** Disk-backed fallback sessions used only when MongoDB is not configured. */
-  authSessions: AuthenticatedSession[];
   customerExperience: CustomerExperienceConfig;
   nextWarrantyId: number;
 }
@@ -333,12 +333,6 @@ export interface LoginInput {
   email: string;
   password: string;
   remember: boolean;
-}
-
-export interface AuthenticatedSession {
-  token: string;
-  user: AdminUser;
-  expiresAt: string;
 }
 
 export interface ProductModelInput {
