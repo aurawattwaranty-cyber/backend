@@ -504,8 +504,17 @@ export async function approveWarranty(
     if (seriesId) registration.seriesId = seriesId;
     if (seriesName) registration.seriesName = seriesName;
 
-    const start = requiredText(input.startDate) || registration.installation.installationDate;
-    const months = input.durationMonths ?? 60;
+    // Coverage runs from the installation date for the term the confirmed model
+    // carries in the catalogue — neither value is entered during review.
+    const start = registration.installation.installationDate;
+    const months = selectedModel.warrantyMonths;
+    if (!Number.isFinite(months) || months <= 0) {
+      throw new AppError(
+        `No warranty term is configured for ${selectedModel.name}. Set it on the Series and Serial No. Uploader page before approving.`,
+        400,
+        "missing_warranty_term",
+      );
+    }
     const note = requiredText(input.note);
     const period = calculateWarrantyPeriod(start, months);
 
@@ -552,7 +561,7 @@ export async function approveWarranty(
         "activated",
         "Warranty Activated",
         "System",
-        `${period.durationMonths} month warranty applied from ${period.start}.`,
+        `${period.durationMonths} month warranty from the ${selectedModel.name} catalogue term applied from ${period.start}.`,
       ),
     );
 

@@ -39,6 +39,11 @@ export interface ProductSeries {
   createdAt: string;
 }
 
+/** A series joined to the catalogue models that carry its warranty terms. */
+export interface SeriesWithModels extends ProductSeries {
+  models: ProductModel[];
+}
+
 export interface SerialImportFile {
   id: string;
   seriesId: string;
@@ -367,11 +372,14 @@ export interface WarrantyQuery {
   pageSize?: number;
 }
 
+/**
+ * The warranty term is never supplied by the reviewer: it is read from the
+ * confirmed model's `warrantyMonths`, and coverage starts on the installation
+ * date the customer registered.
+ */
 export interface ApproveWarrantyInput {
   modelName: string;
   batteryModel?: string;
-  startDate?: string;
-  durationMonths?: number;
   note?: string;
 }
 

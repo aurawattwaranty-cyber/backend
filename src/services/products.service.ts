@@ -3,6 +3,28 @@ import type { ProductModel, ProductModelInput, ProductType } from "../types.js";
 import { AppError } from "../utils/errors.js";
 import { requiredText } from "../utils/validation.js";
 
+const MAX_WARRANTY_MONTHS = 600;
+
+/**
+ * The warranty term drives every activation, so it is validated here rather
+ * than at the point a warranty is approved.
+ */
+function normaliseWarrantyMonths(value: unknown): number {
+  const months = typeof value === "string" ? Number(value) : value;
+  if (typeof months !== "number" || !Number.isFinite(months)) {
+    throw new AppError("Enter the warranty term in months.", 400, "invalid_warranty_months");
+  }
+  const rounded = Math.round(months);
+  if (rounded < 1 || rounded > MAX_WARRANTY_MONTHS) {
+    throw new AppError(
+      `Enter a warranty term between 1 and ${MAX_WARRANTY_MONTHS} months.`,
+      400,
+      "invalid_warranty_months",
+    );
+  }
+  return rounded;
+}
+
 export async function getProductModels(options?: {
   activeOnly?: boolean;
   productType?: ProductType;
@@ -42,7 +64,7 @@ export async function createProductModel(
     name,
     capacityKw: input.capacityKw,
     productType: input.productType,
-    warrantyMonths: input.warrantyMonths,
+    warrantyMonths: normaliseWarrantyMonths(input.warrantyMonths),
     active: input.active,
     createdAt: new Date().toISOString(),
   };
@@ -77,7 +99,9 @@ export async function updateProductModel(
     }
     if (input.capacityKw !== undefined) model.capacityKw = input.capacityKw;
     if (input.productType !== undefined) model.productType = input.productType;
-    if (input.warrantyMonths !== undefined) model.warrantyMonths = input.warrantyMonths;
+    if (input.warrantyMonths !== undefined) {
+      model.warrantyMonths = normaliseWarrantyMonths(input.warrantyMonths);
+    }
     if (input.active !== undefined) model.active = input.active;
 
     db.serials.forEach((serial) => {

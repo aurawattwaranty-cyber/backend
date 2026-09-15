@@ -1,14 +1,48 @@
 import { clone, createId, getDatabase, mutate } from "../data/store.js";
-import type { ProductSeries, ProductType, SerialImportFile } from "../types.js";
+import type {
+  ProductModel,
+  ProductSeries,
+  ProductType,
+  SerialImportFile,
+  SeriesWithModels,
+} from "../types.js";
 import { AppError } from "../utils/errors.js";
 import { requiredText } from "../utils/validation.js";
 
+/**
+ * A model belongs to an uploaded series when their names match. This is the
+ * same rule `approveWarranty` uses to scope model choices to a serial's
+ * series, so the terms shown on the uploader page are exactly the terms an
+ * activation will apply.
+ */
+function isSameSeries(a: string, b: string): boolean {
+  return a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+
 export async function getSeries(): Promise<{
-  series: ProductSeries[];
+  series: SeriesWithModels[];
   files: SerialImportFile[];
+  /** Catalogue models with no uploaded series of the same name. */
+  unmatchedModels: ProductModel[];
 }> {
   const db = getDatabase();
-  return { series: clone(db.series), files: clone(db.serialImportFiles) };
+  const byCapacity = (a: ProductModel, b: ProductModel) =>
+    a.capacityKw - b.capacityKw || a.name.localeCompare(b.name);
+
+  const series = db.series.map((entry) => ({
+    ...clone(entry),
+    models: clone(db.models.filter((model) => isSameSeries(model.series, entry.name))).sort(
+      byCapacity,
+    ),
+  }));
+
+  const unmatchedModels = clone(
+    db.models.filter(
+      (model) => !db.series.some((entry) => isSameSeries(model.series, entry.name)),
+    ),
+  ).sort((a, b) => a.series.localeCompare(b.series) || byCapacity(a, b));
+
+  return { series, files: clone(db.serialImportFiles), unmatchedModels };
 }
 
 export async function createSeries(input: { name: string; productType?: ProductType }): Promise<ProductSeries> {
