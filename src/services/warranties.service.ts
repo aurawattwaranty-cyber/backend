@@ -39,12 +39,19 @@ function makeEvent(
   };
 }
 
+/** The last date on which anything in this registration is still covered. */
+function lastCoverageEnd(registration: WarrantyRegistration): string {
+  return [registration.warrantyEnd, registration.batteryWarrantyEnd]
+    .filter((value): value is string => Boolean(value))
+    .sort()
+    .at(-1) ?? "";
+}
+
 function hasLapsed(registration: WarrantyRegistration): boolean {
-  return (
-    registration.status === "active" &&
-    Boolean(registration.warrantyEnd) &&
-    isExpired(registration.warrantyEnd as string)
-  );
+  const end = lastCoverageEnd(registration);
+  // A registration is only finished once every item it covers has run out — a
+  // battery often outlives the inverter it was installed with.
+  return registration.status === "active" && Boolean(end) && isExpired(end);
 }
 
 /**
@@ -499,17 +506,28 @@ export async function approveWarranty(
       );
     }
 
-    if (batteryModel) {
-      const battery = db.models.find(
-        (entry) => entry.name === batteryModel && entry.productType === "battery",
+    const batteryCatalogue = batteryModel
+      ? db.models.find(
+          (entry) => entry.name === batteryModel && entry.productType === "battery",
+        )
+      : undefined;
+    if (batteryModel && !batteryCatalogue) {
+      throw new AppError(
+        "That battery model no longer exists.",
+        404,
+        "invalid_battery_model",
       );
-      if (!battery) {
-        throw new AppError(
-          "That battery model no longer exists.",
-          404,
-          "invalid_battery_model",
-        );
-      }
+    }
+    if (
+      batteryCatalogue &&
+      (!Number.isFinite(batteryCatalogue.warrantyMonths) ||
+        batteryCatalogue.warrantyMonths <= 0)
+    ) {
+      throw new AppError(
+        `No warranty term is configured for ${batteryCatalogue.name}. Set it on the Series and Serial No. Uploader page before approving.`,
+        400,
+        "missing_warranty_term",
+      );
     }
 
     const serial = db.serials.find((entry) => entry.serial === registration.serial);
@@ -540,6 +558,10 @@ export async function approveWarranty(
     }
     const note = requiredText(input.note);
     const period = calculateWarrantyPeriod(start, months);
+    // Both items are installed on the same day but covered for their own term.
+    const batteryPeriod = batteryCatalogue
+      ? calculateWarrantyPeriod(start, batteryCatalogue.warrantyMonths)
+      : null;
 
     if (!period.start || !period.end) {
       throw new AppError(
@@ -564,13 +586,27 @@ export async function approveWarranty(
       delete registration.installation.batterySerial;
     }
 
-    registration.status = isExpired(period.end) ? "expired" : "active";
+    const lastCoverageEnd =
+      batteryPeriod && registration.installation.batteryInstalled
+        ? [period.end, batteryPeriod.end].sort().at(-1)!
+        : period.end;
+    registration.status = isExpired(lastCoverageEnd) ? "expired" : "active";
     registration.reviewedAt = new Date().toISOString();
     delete registration.decisionNote;
     delete registration.correctionItems;
     registration.warrantyStart = period.start;
     registration.warrantyEnd = period.end;
     registration.warrantyMonths = period.durationMonths;
+
+    if (batteryPeriod && registration.installation.batteryInstalled) {
+      registration.batteryWarrantyStart = batteryPeriod.start;
+      registration.batteryWarrantyEnd = batteryPeriod.end;
+      registration.batteryWarrantyMonths = batteryPeriod.durationMonths;
+    } else {
+      delete registration.batteryWarrantyStart;
+      delete registration.batteryWarrantyEnd;
+      delete registration.batteryWarrantyMonths;
+    }
 
     serial.status = "registered";
     serial.warrantyId = registration.id;
@@ -584,7 +620,14 @@ export async function approveWarranty(
         "activated",
         "Warranty Activated",
         "System",
-        `${period.durationMonths} month warranty from the ${selectedModel.name} catalogue term applied from ${period.start}.`,
+        [
+          `${period.durationMonths} month warranty on ${selectedModel.name} from ${period.start}.`,
+          batteryPeriod && registration.installation.batteryInstalled
+            ? `${batteryPeriod.durationMonths} month warranty on ${batteryCatalogue!.name}.`
+            : "",
+        ]
+          .filter(Boolean)
+          .join(" "),
       ),
     );
 
@@ -653,6 +696,9 @@ export async function rejectWarranty(
     delete registration.warrantyStart;
     delete registration.warrantyEnd;
     delete registration.warrantyMonths;
+    delete registration.batteryWarrantyStart;
+    delete registration.batteryWarrantyEnd;
+    delete registration.batteryWarrantyMonths;
     registration.history.push(
       makeEvent("rejected", "Registration Rejected", "Admin", message),
     );

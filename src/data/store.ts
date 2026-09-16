@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { config, isProduction } from "../config.js";
+import { addMonths } from "../utils/dates.js";
 import { AppError } from "../utils/errors.js";
 import type { Database, SerialNumber } from "../types.js";
 import {
@@ -143,6 +144,29 @@ function migrate(db: Database): boolean {
       changed = true;
     }
   });
+  // Warranties approved before batteries carried their own cover stored only
+  // the inverter's period. Derive the battery's from its catalogue model so
+  // existing certificates show the cover the customer actually has.
+  db.registrations.forEach((registration) => {
+    if (registration.batteryWarrantyEnd) return;
+    if (!registration.installation?.batteryInstalled) return;
+    const start = registration.warrantyStart;
+    const batteryModel = registration.installation.batteryModel;
+    if (!start || !batteryModel) return;
+
+    const model = db.models.find(
+      (entry) => entry.name === batteryModel && entry.productType === "battery",
+    );
+    if (!model || !Number.isFinite(model.warrantyMonths) || model.warrantyMonths <= 0) {
+      return;
+    }
+
+    registration.batteryWarrantyStart = start;
+    registration.batteryWarrantyEnd = addMonths(start, model.warrantyMonths);
+    registration.batteryWarrantyMonths = model.warrantyMonths;
+    changed = true;
+  });
+
   if (db.models.length === 0) {
     db.models = SEED_MODELS.map((model) => ({ ...model }));
     changed = true;

@@ -151,6 +151,15 @@ export interface WarrantyRegistration {
   warrantyStart?: string;
   warrantyEnd?: string;
   warrantyMonths?: number;
+  /**
+   * The battery carries its own cover. A battery in the same installation can
+   * be warranted for a different length than the inverter, so its period is
+   * calculated from the battery model and stored alongside — never merged into
+   * the inverter's.
+   */
+  batteryWarrantyStart?: string;
+  batteryWarrantyEnd?: string;
+  batteryWarrantyMonths?: number;
   history: WarrantyEvent[];
 }
 
