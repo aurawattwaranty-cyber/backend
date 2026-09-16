@@ -112,7 +112,7 @@ authRouter.patch(
   requireAuth,
   requireAdmin,
   asyncHandler(async (req, res) => {
-    const updated = setUserActive(
+    const updated = await setUserActive(
       String(req.params.id),
       Boolean(req.body?.active),
       req.user!.id,

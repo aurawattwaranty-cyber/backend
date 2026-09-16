@@ -4,6 +4,7 @@ import cors from "cors";
 import helmetImport from "helmet";
 import morgan from "morgan";
 import { config } from "./config.js";
+import { refreshFromStore } from "./data/store.js";
 import { apiRouter } from "./routes/index.js";
 import { errorHandler, notFound } from "./middleware/error.middleware.js";
 import { AppError } from "./utils/errors.js";
@@ -49,6 +50,14 @@ export function createApp() {
       version: "1.0.0",
       apiBase: "/api",
     });
+  });
+
+  // Every serverless instance holds its own copy of the database. Picking up
+  // any newer revision before the route runs is what keeps a warranty from
+  // appearing on one request and vanishing on the next, depending on which
+  // instance happened to answer.
+  app.use("/api", (_req, _res, next) => {
+    refreshFromStore().then(() => next(), next);
   });
 
   app.use("/api", apiRouter);

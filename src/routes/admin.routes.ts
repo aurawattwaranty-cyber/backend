@@ -19,7 +19,7 @@ adminRouter.post(
         "reset_disabled",
       );
     }
-    resetDatabase();
+    await resetDatabase();
     res.json({ ok: true });
   }),
 );

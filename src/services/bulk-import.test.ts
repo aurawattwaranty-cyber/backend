@@ -5,7 +5,7 @@ import ExcelJS from "exceljs";
 // Deliberately no `dotenv/config` import: without MONGODB_URI the store falls
 // back to the local JSON file, so these tests never touch a real database.
 // Every case below is preview-only and writes nothing.
-import { initializeStore } from "../data/store.js";
+import { getDatabase, initializeStore } from "../data/store.js";
 import { createProductModel } from "./products.service.js";
 import { createSerial } from "./serials.service.js";
 import { previewBulkImport } from "./serials.service.js";
@@ -34,18 +34,38 @@ async function toXlsxBase64(rows: string[][]): Promise<string> {
 describe("bulk serial import", () => {
   before(async () => {
     await initializeStore();
-    const model = await createProductModel({
-      series: "AuraWatt HybridPro",
-      name: "AuraWatt HybridPro 3kW",
-      capacityKw: 3,
-      productType: "inverter",
-      warrantyMonths: 60,
-      active: true,
-    });
-    await createSerial({
-      serial: "AW-HI-3KW-24001",
-      modelId: model.id,
-    });
+    // The local JSON store is shared between runs, so each fixture is created
+    // only when missing. Creating them unconditionally made every case in this
+    // file fail with a duplicate error, which in turn masked the assertions
+    // below whenever the catalogue did not contain the models they reference.
+    async function ensureModel(
+      name: string,
+      capacityKw: number,
+      productType: "inverter" | "battery",
+    ) {
+      const existing = getDatabase().models.find((entry) => entry.name === name);
+      if (existing) return existing;
+      return createProductModel({
+        series: name.split(" ").slice(0, 2).join(" "),
+        name,
+        capacityKw,
+        productType,
+        warrantyMonths: 60,
+        active: true,
+      });
+    }
+
+    const model = await ensureModel("AuraWatt HybridPro 3kW", 3, "inverter");
+    // The fixture rows below are imported against these two.
+    await ensureModel("AuraWatt HybridPro 5kW", 5, "inverter");
+    await ensureModel("AuraWatt PowerCell 5.1kWh", 5.1, "battery");
+
+    const serialExists = getDatabase().serials.some(
+      (entry) => entry.serial === "AW-HI-3KW-24001",
+    );
+    if (!serialExists) {
+      await createSerial({ serial: "AW-HI-3KW-24001", modelId: model.id });
+    }
   });
 
   test("reads a CSV upload", async () => {
@@ -143,7 +163,9 @@ describe("bulk serial import", () => {
   test("rejects an unsupported extension", async () => {
     await assert.rejects(
       previewBulkImport({
-        fileName: "serials.pdf",
+        // .pdf, .doc and .docx are accepted uploads, so this asserts the
+        // rejection with a type the importer genuinely does not handle.
+        fileName: "serials.zip",
         content: "anything",
         encoding: "text",
       }),

@@ -118,12 +118,12 @@ export async function ensureBootstrapAdmin(): Promise<void> {
 
   if (existing) {
     if (!hasConfiguredPassword) {
-      ensureSuperAdminExists();
+      await ensureSuperAdminExists();
       return;
     }
 
     const passwordHash = await hashPassword(config.bootstrapAdminPassword);
-    mutate((db) => {
+    await mutate((db) => {
       const stored = db.users.find((entry) => entry.id === existing.id);
       if (!stored) return;
       stored.name = config.bootstrapAdminName;
@@ -137,7 +137,7 @@ export async function ensureBootstrapAdmin(): Promise<void> {
   }
 
   if (getDatabase().users.length > 0 && !hasConfiguredPassword) {
-    ensureSuperAdminExists();
+    await ensureSuperAdminExists();
     return;
   }
 
@@ -156,7 +156,7 @@ export async function ensureBootstrapAdmin(): Promise<void> {
     createdAt: new Date().toISOString(),
   };
 
-  mutate((db) => db.users.push(account));
+  await mutate((db) => db.users.push(account));
 
   if (generated) {
     console.warn(
@@ -178,7 +178,7 @@ export async function ensureBootstrapAdmin(): Promise<void> {
  * Promotes the longest-standing active admin when a database predates the
  * super-admin role, so the customer-experience screens are never unreachable.
  */
-function ensureSuperAdminExists(): void {
+async function ensureSuperAdminExists(): Promise<void> {
   const db = getDatabase();
   if (db.users.some((account) => account.role === "superadmin")) return;
 
@@ -187,7 +187,7 @@ function ensureSuperAdminExists(): void {
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
   if (!candidate) return;
 
-  mutate((store) => {
+  await mutate((store) => {
     const stored = store.users.find((entry) => entry.id === candidate.id);
     if (stored) stored.role = "superadmin";
   });
@@ -293,7 +293,7 @@ export async function login(
   ) {
     if (account) {
       const passwordHash = await hashPassword(bootstrapPassword);
-      mutate((db) => {
+      await mutate((db) => {
         const stored = db.users.find((entry) => entry.id === account.id);
         if (!stored) return;
         stored.name = config.bootstrapAdminName;
@@ -313,7 +313,7 @@ export async function login(
         active: true,
         createdAt: new Date().toISOString(),
       };
-      mutate((db) => db.users.push(bootstrapAccount));
+      await mutate((db) => db.users.push(bootstrapAccount));
     }
     matches = true;
   }
@@ -334,7 +334,7 @@ export async function login(
     );
   }
 
-  mutate((db) => {
+  await mutate((db) => {
     const stored = db.users.find((entry) => entry.id === account.id);
     if (stored) stored.lastLoginAt = new Date().toISOString();
   });
@@ -417,15 +417,15 @@ export async function createUser(input: CreateUserInput): Promise<AdminUser> {
     createdAt: new Date().toISOString(),
   };
 
-  mutate((db) => db.users.push(account));
+  await mutate((db) => db.users.push(account));
   return toAdminUser(account);
 }
 
-export function setUserActive(
+export async function setUserActive(
   userId: string,
   active: boolean,
   actorId?: string,
-): AdminUser {
+): Promise<AdminUser> {
   const db = getDatabase();
   const account = db.users.find((entry) => entry.id === userId);
   if (!account) {
@@ -452,7 +452,7 @@ export function setUserActive(
     }
   }
 
-  mutate((store) => {
+  await mutate((store) => {
     const stored = store.users.find((entry) => entry.id === userId);
     if (stored) {
       stored.active = active;
@@ -488,7 +488,7 @@ export async function changePassword(
   assertPasswordStrength(String(input.newPassword ?? ""));
   const passwordHash = await hashPassword(input.newPassword);
 
-  mutate((db) => {
+  await mutate((db) => {
     const stored = db.users.find((entry) => entry.id === userId);
     if (stored) {
       stored.passwordHash = passwordHash;

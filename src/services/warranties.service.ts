@@ -39,18 +39,27 @@ function makeEvent(
   };
 }
 
-function ensureExpiredSync(): void {
-  const stale = getDatabase().registrations.filter(
-    (registration) =>
-      registration.status === "active" &&
-      registration.warrantyEnd &&
-      isExpired(registration.warrantyEnd),
+function hasLapsed(registration: WarrantyRegistration): boolean {
+  return (
+    registration.status === "active" &&
+    Boolean(registration.warrantyEnd) &&
+    isExpired(registration.warrantyEnd as string)
   );
-  if (stale.length === 0) return;
+}
 
-  mutate((db) => {
+/**
+ * Moves warranties whose term has run out into `expired`.
+ *
+ * This runs on read paths, so it must only write when something actually
+ * lapsed — and it re-selects the rows inside the mutator so a replay after a
+ * write conflict acts on the newer state rather than a captured snapshot.
+ */
+async function ensureExpired(): Promise<void> {
+  if (!getDatabase().registrations.some(hasLapsed)) return;
+
+  await mutate((db) => {
     db.registrations.forEach((registration) => {
-      if (!stale.some((entry) => entry.id === registration.id)) return;
+      if (!hasLapsed(registration)) return;
       registration.status = "expired";
       registration.history.push(
         makeEvent(
@@ -215,15 +224,17 @@ export async function createWarrantyRegistration(
   }
 
   const registrationYear = new Date().getFullYear();
-  const id = `AWR-WC-${registrationYear}-${String(db.nextWarrantyId).padStart(6, "0")}`;
   const seriesName = serialRecord.seriesId
     ? db.series.find((entry) => entry.id === serialRecord.seriesId)?.name
     : undefined;
   const batterySeriesName = batterySerialRecord?.seriesId
     ? db.series.find((entry) => entry.id === batterySerialRecord.seriesId)?.name
     : undefined;
+  // `id` is assigned inside the write below, from the counter as it stands at
+  // commit time. Numbering it out here would hand two registrations the same
+  // id whenever a write has to be replayed against newer state.
   const registration: WarrantyRegistration = {
-    id,
+    id: "",
     serial,
     ...(serialRecord.seriesId ? { seriesId: serialRecord.seriesId } : {}),
     ...(seriesName ? { seriesName } : {}),
@@ -254,9 +265,14 @@ export async function createWarrantyRegistration(
     ],
   };
 
-  mutate((store) => {
-    store.registrations.unshift(registration);
+  const stored = await mutate((store) => {
+    const id = `AWR-WC-${registrationYear}-${String(store.nextWarrantyId).padStart(6, "0")}`;
+    registration.id = id;
     store.nextWarrantyId += 1;
+    // A failed attempt is discarded with the cache it wrote into, so there is
+    // never a half-applied copy of this registration to clean up first.
+    store.registrations.unshift(registration);
+
     const storedSerial = store.serials.find((entry) => entry.serial === serial);
     if (storedSerial) {
       storedSerial.status = "registered";
@@ -271,9 +287,10 @@ export async function createWarrantyRegistration(
         storedBatterySerial.warrantyId = id;
       }
     }
+    return registration;
   });
 
-  return clone(registration);
+  return clone(stored);
 }
 
 export async function getWarrantyStatus(
@@ -283,7 +300,7 @@ export async function getWarrantyStatus(
   if (!id) {
     throw new AppError("Enter a warranty ID to continue.", 400, "empty_id");
   }
-  ensureExpiredSync();
+  await ensureExpired();
   return withResolvedSeries(findRegistration(id));
 }
 
@@ -291,7 +308,7 @@ export async function resubmitWarranty(
   warrantyId: string,
   note?: string,
 ): Promise<WarrantyRegistration> {
-  const updated = mutate((db) => {
+  const updated = await mutate((db) => {
     const registration = db.registrations.find((entry) => entry.id === warrantyId);
     if (!registration) {
       throw new AppError("That registration no longer exists.", 404, "not_found");
@@ -338,7 +355,7 @@ function compareRegistrations(
 export async function getWarrantyRegistrations(
   query: WarrantyQuery = {},
 ): Promise<Paginated<WarrantyRegistration>> {
-  ensureExpiredSync();
+  await ensureExpired();
 
   const {
     search = "",
@@ -380,12 +397,12 @@ export async function getWarrantyRegistrations(
 }
 
 export async function getWarrantyById(id: string): Promise<WarrantyRegistration> {
-  ensureExpiredSync();
+  await ensureExpired();
   return withResolvedSeries(findRegistration(id));
 }
 
 export async function getDashboardStats(): Promise<DashboardStats> {
-  ensureExpiredSync();
+  await ensureExpired();
   const db = getDatabase();
   const byStatus = (status: WarrantyStatus) =>
     db.registrations.filter((entry) => entry.status === status).length;
@@ -413,7 +430,7 @@ export async function approveWarranty(
   input: ApproveWarrantyInput,
   actor = "Admin",
 ): Promise<WarrantyRegistration> {
-  const updated = mutate((db) => {
+  const updated = await mutate((db) => {
     const registration = db.registrations.find((entry) => entry.id === id);
     if (!registration) {
       throw new AppError("That registration no longer exists.", 404, "not_found");
@@ -456,10 +473,16 @@ export async function approveWarranty(
     const seriesName = seriesId
       ? db.series.find((entry) => entry.id === seriesId)?.name
       : registration.seriesName;
-    if (
-      seriesName &&
-      selectedModel.series.trim().toLowerCase() !== seriesName.trim().toLowerCase()
-    ) {
+    // Serial → series → model: the confirmed model has to sit under the series
+    // the serial was uploaded into, since that is where its term is configured.
+    const belongsToSeries = seriesId
+      ? selectedModel.seriesId
+        ? selectedModel.seriesId === seriesId
+        : Boolean(seriesName) &&
+          selectedModel.series.trim().toLowerCase() ===
+            (seriesName as string).trim().toLowerCase()
+      : true;
+    if (!belongsToSeries) {
       throw new AppError(
         "The selected model does not belong to this serial's series.",
         400,
@@ -584,7 +607,7 @@ export async function requestCorrection(
     );
   }
 
-  const updated = mutate((db) => {
+  const updated = await mutate((db) => {
     const registration = db.registrations.find((entry) => entry.id === id);
     if (!registration) {
       throw new AppError("That registration no longer exists.", 404, "not_found");
@@ -619,7 +642,7 @@ export async function rejectWarranty(
     );
   }
 
-  const updated = mutate((db) => {
+  const updated = await mutate((db) => {
     const registration = db.registrations.find((entry) => entry.id === id);
     if (!registration) {
       throw new AppError("That registration no longer exists.", 404, "not_found");

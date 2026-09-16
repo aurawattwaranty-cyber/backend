@@ -2,6 +2,12 @@ export type ProductType = "inverter" | "battery" | "combo";
 
 export interface ProductModel {
   id: string;
+  /**
+   * The series this model belongs to. `seriesId` is the real link — `series`
+   * is the series name, kept denormalised for display and for catalogue rows
+   * that predate the id.
+   */
+  seriesId?: string;
   series: string;
   name: string;
   capacityKw: number;
@@ -341,12 +347,14 @@ export interface LoginInput {
 }
 
 export interface ProductModelInput {
-  series: string;
+  /** Preferred over `series`: binds the model to a series record by id. */
+  seriesId?: string;
+  series?: string;
   name: string;
   capacityKw: number;
-  productType: ProductType;
+  productType?: ProductType;
   warrantyMonths: number;
-  active: boolean;
+  active?: boolean;
 }
 
 export interface PhotoRequirementInput {

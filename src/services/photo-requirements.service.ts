@@ -51,7 +51,7 @@ export async function createPhotoRequirement(
       1,
   };
 
-  mutate((store) => store.photoRequirements.push(requirement));
+  await mutate((store) => store.photoRequirements.push(requirement));
   return clone(requirement);
 }
 
@@ -59,7 +59,7 @@ export async function updatePhotoRequirement(
   id: string,
   input: Partial<PhotoRequirementInput>,
 ): Promise<PhotoRequirement> {
-  const updated = mutate((db) => {
+  const updated = await mutate((db) => {
     const requirement = db.photoRequirements.find((entry) => entry.id === id);
     if (!requirement) {
       throw new AppError("That requirement no longer exists.", 404, "not_found");
@@ -89,7 +89,7 @@ export async function updatePhotoRequirement(
 }
 
 export async function deletePhotoRequirement(id: string): Promise<void> {
-  mutate((db) => {
+  await mutate((db) => {
     const index = db.photoRequirements.findIndex((entry) => entry.id === id);
     if (index === -1) {
       throw new AppError("That requirement no longer exists.", 404, "not_found");
@@ -105,7 +105,7 @@ export async function movePhotoRequirement(
   id: string,
   direction: "up" | "down",
 ): Promise<PhotoRequirement[]> {
-  const reordered = mutate((db) => {
+  const reordered = await mutate((db) => {
     const ordered = sortByOrder(db.photoRequirements);
     const index = ordered.findIndex((entry) => entry.id === id);
     const target = direction === "up" ? index - 1 : index + 1;

@@ -341,7 +341,7 @@ export async function createSerial(
     addedAt: new Date().toISOString(),
   };
 
-  mutate((store) => store.serials.unshift(record));
+  await mutate((store) => store.serials.unshift(record));
   return clone(record);
 }
 
@@ -682,7 +682,7 @@ export async function bulkImportSerials(
   });
 
   if (created.length > 0 || series) {
-    mutate((store) => {
+    await mutate((store) => {
       const importFileId = series ? createId("imp") : undefined;
       if (importFileId) {
         created.forEach((serial) => {

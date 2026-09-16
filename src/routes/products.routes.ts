@@ -3,6 +3,7 @@ import { asyncHandler } from "../utils/async-handler.js";
 import { requireAuth, requireAdmin } from "../middleware/auth.middleware.js";
 import {
   createProductModel,
+  deleteProductModel,
   getProductModels,
   getProductSeries,
   updateProductModel,
@@ -48,5 +49,15 @@ productsRouter.patch(
   asyncHandler(async (req, res) => {
     const updated = await updateProductModel(String(req.params.id), req.body ?? {});
     res.json({ item: updated });
+  }),
+);
+
+productsRouter.delete(
+  "/:id",
+  requireAuth,
+  requireAdmin,
+  asyncHandler(async (req, res) => {
+    await deleteProductModel(String(req.params.id));
+    res.status(204).send();
   }),
 );

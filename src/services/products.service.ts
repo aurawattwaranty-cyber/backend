@@ -47,11 +47,30 @@ export async function createProductModel(
   input: ProductModelInput,
 ): Promise<ProductModel> {
   const name = requiredText(input.name);
-  const series = requiredText(input.series);
   if (!name) throw new AppError("Enter a model name.", 400, "invalid_input");
-  if (!series) throw new AppError("Enter a product series.", 400, "invalid_input");
 
-  const duplicate = getDatabase().models.some(
+  const seriesId = requiredText(input.seriesId);
+  const db = getDatabase();
+  // A model belongs to a series record when one is named; the loose `series`
+  // string stays supported for catalogue rows created outside the uploader.
+  const owner = seriesId
+    ? db.series.find((entry) => entry.id === seriesId)
+    : undefined;
+  if (seriesId && !owner) {
+    throw new AppError("Select a valid product series.", 400, "invalid_series");
+  }
+
+  const series = owner?.name ?? requiredText(input.series);
+  if (!series) {
+    throw new AppError("Enter a product series.", 400, "invalid_input");
+  }
+
+  const capacityKw = Number(input.capacityKw);
+  if (!Number.isFinite(capacityKw) || capacityKw <= 0) {
+    throw new AppError("Enter the model capacity.", 400, "invalid_capacity");
+  }
+
+  const duplicate = db.models.some(
     (model) => model.name.toLowerCase() === name.toLowerCase(),
   );
   if (duplicate) {
@@ -60,24 +79,53 @@ export async function createProductModel(
 
   const model: ProductModel = {
     id: createId("mdl"),
+    ...(owner ? { seriesId: owner.id } : {}),
     series,
     name,
-    capacityKw: input.capacityKw,
-    productType: input.productType,
+    capacityKw,
+    // A series fixes the product type of everything under it, so a model added
+    // there inherits it rather than letting the two disagree.
+    productType: owner?.productType ?? input.productType ?? "inverter",
     warrantyMonths: normaliseWarrantyMonths(input.warrantyMonths),
-    active: input.active,
+    active: input.active ?? true,
     createdAt: new Date().toISOString(),
   };
 
-  mutate((db) => db.models.push(model));
+  await mutate((store) => store.models.push(model));
   return clone(model);
+}
+
+export async function deleteProductModel(id: string): Promise<void> {
+  await mutate((db) => {
+    const model = db.models.find((entry) => entry.id === id);
+    if (!model) {
+      throw new AppError("That product model no longer exists.", 404, "not_found");
+    }
+    const inUse = db.registrations.some(
+      (registration) => registration.modelId === id,
+    );
+    if (inUse) {
+      throw new AppError(
+        "This model is used by a registered warranty and cannot be deleted.",
+        409,
+        "model_in_use",
+      );
+    }
+    db.models = db.models.filter((entry) => entry.id !== id);
+    // Serials keep their series; only the model assignment is cleared.
+    db.serials.forEach((serial) => {
+      if (serial.modelId !== id) return;
+      serial.modelId = "";
+      serial.modelName = "";
+    });
+  });
 }
 
 export async function updateProductModel(
   id: string,
   input: Partial<ProductModelInput>,
 ): Promise<ProductModel> {
-  const updated = mutate((db) => {
+  const updated = await mutate((db) => {
     const model = db.models.find((entry) => entry.id === id);
     if (!model) {
       throw new AppError("That product model no longer exists.", 404, "not_found");

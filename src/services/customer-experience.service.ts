@@ -308,7 +308,7 @@ export async function updateCustomerExperience(
     updatedBy: actor || "Super Admin",
   };
 
-  mutate((db) => {
+  await mutate((db) => {
     db.customerExperience = next;
   });
 
@@ -321,7 +321,7 @@ export async function resetCustomerExperience(
   const fresh = defaultCustomerExperience();
   fresh.updatedBy = actor || "Super Admin";
 
-  mutate((db) => {
+  await mutate((db) => {
     db.customerExperience = fresh;
   });
 
